@@ -6,6 +6,8 @@ WORKDIR /app
 
 # Install system deps (needed for pdf2pic / OCR)
 RUN apt-get update && apt-get install -y \
+    graphicsmagick \
+    ghostscript \
     poppler-utils \
     tesseract-ocr \
     && rm -rf /var/lib/apt/lists/*
