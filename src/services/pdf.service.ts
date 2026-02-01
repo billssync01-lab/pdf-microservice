@@ -1,10 +1,17 @@
-import pdf from "pdf-parse";
+import { fromBuffer } from "pdf2pic";
+import fs from "fs";
+import path from "path";
 
-export async function processPDF(buffer: Buffer) {
-  const data = await pdf(buffer);
+export async function pdfToImages(buffer: Buffer, jobId: string) {
+  const outputDir = path.join("tmp", jobId);
+  fs.mkdirSync(outputDir, { recursive: true });
 
-  return {
-    pages: data.numpages,
-    text: data.text
-  };
+  const convert = fromBuffer(buffer, {
+    density: 200,
+    format: "png",
+    savePath: outputDir,
+  });
+
+  const pages = await convert.bulk(-1);
+  return pages.map(p => p.path);
 }
