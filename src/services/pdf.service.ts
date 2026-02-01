@@ -3,7 +3,7 @@ import fs from "fs";
 import path from "path";
 
 export async function pdfToImages(buffer: Buffer, jobId: string) {
-  const outputDir = path.join("tmp", jobId);
+  const outputDir = path.join("/tmp", jobId);
   fs.mkdirSync(outputDir, { recursive: true });
 
   const convert = fromBuffer(buffer, {
