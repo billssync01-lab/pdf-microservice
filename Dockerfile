@@ -27,5 +27,5 @@ RUN npm run build
 # Expose service port
 EXPOSE 4000
 
-# Start the service
-CMD ["node", "dist/server.js"]
+# Start the worker
+CMD ["npm", "run", "worker"]

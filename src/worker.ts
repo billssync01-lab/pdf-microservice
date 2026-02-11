@@ -29,7 +29,7 @@ async function claimJob() {
     .set({ lockedAt: new Date() })
     .where(inArray(Receipts.id, sql`(
       SELECT ${Receipts.id} FROM ${Receipts}
-      WHERE ${Receipts.status} = 'queue' AND ${Receipts.lockedAt} IS NULL
+      WHERE ${Receipts.status} = 'queued' AND ${Receipts.lockedAt} IS NULL
       FOR UPDATE SKIP LOCKED
       LIMIT ${concurrency}
     )`))

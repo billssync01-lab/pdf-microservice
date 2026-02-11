@@ -6,7 +6,7 @@
     "dev": "nodemon src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "worker": "ts-node src/worker.ts"
+    "worker": "node dist/worker.js"
   },
   "keywords": [],
   "author": "",
