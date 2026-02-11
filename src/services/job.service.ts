@@ -5,6 +5,8 @@ import { builder, extractWithVision } from './extraction';
 import axios from 'axios';
 import logger from '../utils/logger';
 import { notifyStatusUpdate } from '../utils/sse';
+import { pdfToImages } from './pdf.service';
+import fs from 'fs';
 
 export async function getReceiptsByJobId(jobId: string) {
   return await db.select().from(Receipts).where(eq(Receipts.syncJobId, jobId));
@@ -75,13 +77,31 @@ export async function processReceiptPage(
 
     // Fetch file buffer
     const response = await axios.get(receipt.fileUrl, { responseType: 'arraybuffer' });
-    const pageBuffer = Buffer.from(response.data);
+    const fileBuffer = Buffer.from(response.data);
+    const contentType = response.headers['content-type'];
+
+    let imageBuffer: Buffer;
+
+    if (contentType === 'application/pdf' || receipt.fileUrl.toLowerCase().endsWith('.pdf')) {
+      logger.info({ receiptId }, "Converting PDF to image for extraction");
+      const imagePaths = await pdfToImages(fileBuffer, `job-${receiptId}`);
+      if (imagePaths.length === 0) {
+        throw new Error("Failed to convert PDF to images");
+      }
+      // Use the first page for now
+      imageBuffer = fs.readFileSync(imagePaths[0]);
+      
+      // Clean up temp files (optional but recommended)
+      // for (const p of imagePaths) fs.unlinkSync(p);
+    } else {
+      imageBuffer = fileBuffer;
+    }
 
     // Build prompt
     const prompt = await builder(category, type, documentType, pageType);
 
     // Extract with vision
-    const result = await extractWithVision(pageBuffer, prompt, type);
+    const result = await extractWithVision(imageBuffer, prompt, type);
     if (result) {
       await deductCredits(userId, 1);
     }

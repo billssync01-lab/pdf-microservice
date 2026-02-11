@@ -1,6 +1,6 @@
 import { Router } from "express";
 import multer from "multer";
-import { pdfToImagesPoppler } from "../services/poppler.service";
+import { pdfToImages } from "../services/pdf.service";
 import { randomUUID } from "crypto";
 import { auth } from "../middleware/auth";
 
@@ -13,7 +13,7 @@ router.post("/", auth, upload.single("file"), async (req, res) => {
   }
 
   const jobId = randomUUID();
-  const images = await pdfToImagesPoppler(req.file.buffer, jobId);
+  const images = await pdfToImages(req.file.buffer, jobId);
 
   res.json({
     success: true,
