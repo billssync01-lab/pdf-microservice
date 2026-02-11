@@ -301,7 +301,7 @@ Rules:
   let documentTypeInstruction = "";
 
   switch (documentType) {
-    case "receipt":
+    case "Receipt Image":
       documentTypeInstruction = `
 The document is a receipt.
 Line items may be present.
@@ -309,7 +309,15 @@ Focus on totals, taxes, discounts and merchant details.
       `.trim();
       break;
 
-    case "invoice":
+      case "Receipt PDF":
+      documentTypeInstruction = `
+The document is a receipt.
+Line items may be present.
+Focus on totals, taxes, discounts and merchant details.
+      `.trim();
+      break;
+
+    case "Invoice PDF":
       documentTypeInstruction = `
 The document is an invoice.
 Extract invoice_number, due_date, customer_name, billing_address and line_items, discount, tax if available.

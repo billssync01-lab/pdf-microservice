@@ -1,7 +1,7 @@
 import axios from 'axios';
 import logger from './logger';
 
-const SSE_URL = 'https://billsdeck.com/api/sse/notify';
+const SSE_URL = 'https://billsdeck.com/app/api/sse/notify';
 
 export async function notifyStatusUpdate(userId: number, jobId: string | number, status: string, details?: any) {
   try {
