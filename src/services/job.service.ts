@@ -13,6 +13,7 @@ export async function getReceiptsByJobId(jobId: string) {
 }
 
 export async function updateReceiptData(
+  userId: number,
   receiptId: number,
   rawData: Record<string, any>,
   fileUrl?: string
@@ -27,11 +28,11 @@ export async function updateReceiptData(
     .where(eq(Receipts.id, receiptId))
     .returning();
 
-  await notifyStatusUpdate(receiptId, 'parsed', { fileUrl });
+  await notifyStatusUpdate(userId, receiptId, 'parsed', { fileUrl });
   return result[0];
 }
 
-export async function updateReceiptError(receiptId: number, errorMessage: string) {
+export async function updateReceiptError(userId: number, receiptId: number, errorMessage: string) {
   const result = await db.update(Receipts)
     .set({
       status: 'parsing failed',
@@ -41,7 +42,7 @@ export async function updateReceiptError(receiptId: number, errorMessage: string
     .where(eq(Receipts.id, receiptId))
     .returning();
 
-  await notifyStatusUpdate(receiptId, 'parsing failed', { error: errorMessage });
+  await notifyStatusUpdate(userId, receiptId, 'parsing failed', { error: errorMessage });
   return result;
 }
 
@@ -68,7 +69,7 @@ export async function processReceiptPage(
       .set({ status: 'inprogress', updatedAt: new Date() })
       .where(eq(Receipts.id, receiptId));
 
-    await notifyStatusUpdate(receiptId, 'inprogress');
+    await notifyStatusUpdate(userId, receiptId, 'inprogress');
 
     const receipt = (await db.select().from(Receipts).where(eq(Receipts.id, receiptId)))[0];
     if (!receipt || !receipt.fileUrl) {
@@ -107,12 +108,12 @@ export async function processReceiptPage(
     }
 
     // Save results
-    await updateReceiptData(receiptId, result, receipt.fileUrl);
+    await updateReceiptData(userId, receiptId, result, receipt.fileUrl);
     return true;
 
   } catch (error: any) {
     console.error(`Error processing receipt ${receiptId}:`, error);
-    await updateReceiptError(receiptId, error.message || "Unknown error");
+    await updateReceiptError(userId, receiptId, error.message || "Unknown error");
     return false;
   }
 }
@@ -148,7 +149,7 @@ export async function processJob(jobOrId: any) {
     .set({ status: 'processing', updatedAt: new Date() })
     .where(eq(Receipts.id, job.id));
   logger.info("Updated job status to processing")
-  await notifyStatusUpdate(job.id, 'processing');
+  await notifyStatusUpdate(job.userId, job.id, 'processing');
 
   if (documentType === "Receipt" || documentType === "Receipt Image") {
     logger.info({ documentType, job, jobId: job.syncJobId }, "Fetching job details")
@@ -175,7 +176,7 @@ export async function processJob(jobOrId: any) {
       .set({ status: finalStatus, updatedAt: new Date() })
       .where(eq(Receipts.id, job.id));
     logger.info({ finalStatus }, "Marked job status")
-    await notifyStatusUpdate(job.id, finalStatus);
+    await notifyStatusUpdate(job.userId, job.id, finalStatus);
 
 
     return {
