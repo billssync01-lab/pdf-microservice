@@ -28,4 +28,7 @@ RUN npm run build
 EXPOSE 4000
 
 # Start the worker
-CMD ["npm", "run", "worker"]
+COPY start.sh ./start.sh
+RUN chmod +x ./start.sh
+
+CMD ["./start.sh"]

@@ -56,6 +56,7 @@ export async function deductCredits(userId: number, amount: number) {
 }
 
 export async function processReceiptPage(
+  
   receiptId: number,
   userId: number,
   category: string,
