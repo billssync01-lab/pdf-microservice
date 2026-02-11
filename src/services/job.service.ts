@@ -56,7 +56,7 @@ export async function deductCredits(userId: number, amount: number) {
 }
 
 export async function processReceiptPage(
-  
+
   receiptId: number,
   userId: number,
   category: string,
@@ -152,7 +152,7 @@ export async function processJob(jobOrId: any) {
   logger.info("Updated job status to processing")
   await notifyStatusUpdate(job.userId, job.id, 'processing');
 
-  if (documentType === "Receipt" || documentType === "Receipt Image") {
+  if (documentType === "Receipt" || documentType === "Receipt Image" || documentType === "Receipt PDF" || documentType === "Invoice PDF" || documentType === "Email invoice") {
     logger.info({ documentType, job, jobId: job.syncJobId }, "Fetching job details")
     const receipts = await getReceiptsByJobId(job.syncJobId);
 
