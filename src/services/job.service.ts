@@ -14,6 +14,7 @@ export async function getReceiptsByJobId(jobId: string) {
 
 export async function updateReceiptData(
   userId: number,
+  organizationId: number,
   receiptId: number,
   rawData: Record<string, any>,
   fileUrl?: string
@@ -28,11 +29,11 @@ export async function updateReceiptData(
     .where(eq(Receipts.id, receiptId))
     .returning();
 
-  await notifyStatusUpdate(userId, receiptId, 'parsed', { fileUrl });
+  await notifyStatusUpdate(organizationId, receiptId, 'parsed', { fileUrl });
   return result[0];
 }
 
-export async function updateReceiptError(userId: number, receiptId: number, errorMessage: string) {
+export async function updateReceiptError(organizationId: number, receiptId: number, errorMessage: string) {
   const result = await db.update(Receipts)
     .set({
       status: 'parsing failed',
@@ -42,7 +43,7 @@ export async function updateReceiptError(userId: number, receiptId: number, erro
     .where(eq(Receipts.id, receiptId))
     .returning();
 
-  await notifyStatusUpdate(userId, receiptId, 'parsing failed', { error: errorMessage });
+  await notifyStatusUpdate(organizationId, receiptId, 'parsing failed', { error: errorMessage });
   return result;
 }
 
@@ -70,12 +71,12 @@ export async function processReceiptPage(
       .set({ status: 'inprogress', updatedAt: new Date() })
       .where(eq(Receipts.id, receiptId));
 
-    await notifyStatusUpdate(userId, receiptId, 'inprogress');
-
     const receipt = (await db.select().from(Receipts).where(eq(Receipts.id, receiptId)))[0];
     if (!receipt || !receipt.fileUrl) {
       throw new Error("Receipt not found or missing file URL");
     }
+
+    await notifyStatusUpdate(receipt.organizationId, receiptId, 'inprogress');
 
     // Fetch file buffer
     const response = await axios.get(receipt.fileUrl, { responseType: 'arraybuffer' });
@@ -109,12 +110,19 @@ export async function processReceiptPage(
     }
 
     // Save results
-    await updateReceiptData(userId, receiptId, result, receipt.fileUrl);
+    await updateReceiptData(userId, receipt.organizationId, receiptId, result, receipt.fileUrl);
     return true;
 
   } catch (error: any) {
     console.error(`Error processing receipt ${receiptId}:`, error);
-    await updateReceiptError(userId, receiptId, error.message || "Unknown error");
+    // We need organizationId here. If receipt fetch failed, we might not have it.
+    // But if we have receiptId, we can probably fetch it or assume it's available.
+    // Let's try to get it from the receipt we fetched.
+    const results = await db.select().from(Receipts).where(eq(Receipts.id, receiptId));
+    const orgId = results[0]?.organizationId;
+    if (orgId) {
+        await updateReceiptError(orgId, receiptId, error.message || "Unknown error");
+    }
     return false;
   }
 }
@@ -150,7 +158,7 @@ export async function processJob(jobOrId: any) {
     .set({ status: 'processing', updatedAt: new Date() })
     .where(eq(Receipts.id, job.id));
   logger.info("Updated job status to processing")
-  await notifyStatusUpdate(job.userId, job.id, 'processing');
+  await notifyStatusUpdate(job.organizationId, job.id, 'processing');
 
   if (documentType === "Receipt" || documentType === "Receipt Image" || documentType === "Receipt PDF" || documentType === "Invoice PDF" || documentType === "Email invoice") {
     logger.info({ documentType, job, jobId: job.syncJobId }, "Fetching job details")
@@ -177,7 +185,7 @@ export async function processJob(jobOrId: any) {
       .set({ status: finalStatus, updatedAt: new Date() })
       .where(eq(Receipts.id, job.id));
     logger.info({ finalStatus }, "Marked job status")
-    await notifyStatusUpdate(job.userId, job.id, finalStatus);
+    await notifyStatusUpdate(job.organizationId, job.id, finalStatus);
 
 
     return {
