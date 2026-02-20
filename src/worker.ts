@@ -1,10 +1,30 @@
 import { db } from './db';
 import { SyncJobs, Receipts } from './schema';
-import { eq, and, isNull, lt, inArray, sql } from 'drizzle-orm';
+import { eq, and, isNull, lt, inArray, sql, or } from 'drizzle-orm';
 import { processJob } from './services/job.service';
+import { JobProcessor } from './sync/job.processor';
+import { runAutomationCron } from './worker/automation.cron';
+import { runDeltaSyncCron } from './worker/delta-sync.cron';
 import logger from './utils/logger';
 
-async function claimJob() {
+const accountingProcessor = new JobProcessor();
+
+async function claimAccountingJobs() {
+  const concurrency = 3;
+  return await db.update(SyncJobs)
+    .set({ lockedAt: new Date(), status: 'processing' })
+    .where(inArray(SyncJobs.id, sql`(
+      SELECT ${SyncJobs.id} FROM ${SyncJobs}
+      WHERE ${SyncJobs.documentType} = 'accounting_sync' 
+      AND (${SyncJobs.status} = 'queued' OR (${SyncJobs.status} = 'failed' AND ${SyncJobs.attempts} < ${SyncJobs.maxAttempts} AND ${SyncJobs.nextRunAt} < NOW()))
+      AND ${SyncJobs.lockedAt} IS NULL
+      FOR UPDATE SKIP LOCKED
+      LIMIT ${concurrency}
+    )`))
+    .returning();
+}
+
+async function claimReceiptJobs() {
   logger.info("Claiming jobs")
 
   // Handle stuck jobs: set status to 'stuck' if processing for > 5 mins
@@ -41,37 +61,41 @@ async function claimJob() {
 }
 
 async function workerLoop() {
-  console.log('🚀 Receipt Job Processing Worker started...');
+  console.log('🚀 Receipt & Accounting Job Processing Worker started...');
 
   while (true) {
     try {
-      const jobs = await claimJob();
-
-      if (jobs && jobs.length > 0) {
-        logger.info({ count: jobs.length }, "Claimed jobs")
-        console.log(`📦 Claimed ${jobs.length} jobs`);
-        
-        // Process jobs in parallel up to concurrency limit
-        await Promise.all(jobs.map(async (job) => {
+      // 1. Handle Receipt Jobs
+      const receiptJobs = await claimReceiptJobs();
+      if (receiptJobs && receiptJobs.length > 0) {
+        await Promise.all(receiptJobs.map(async (job) => {
           try {
-            logger.info({ job, jobid: job.syncJobId, documentType: job.documentType }, "Processing job")
-            console.log(`⏳ Processing job: ${job.syncJobId} (${job.documentType})`);
-            const result = await processJob(job);
-            logger.info({ job, jobid: job.syncJobId, result }, "Processed job")
-            console.log(`✅ Processed job: ${job.syncJobId}`, result);
+            await processJob(job);
           } catch (jobError) {
-            console.error(`❌ Error processing job ${job.syncJobId}:`, jobError);
+            console.error(`❌ Error processing receipt job ${job.syncJobId}:`, jobError);
           }
         }));
-      } else {
-        // Random sleep between 1s and 3s
+      }
+
+      // 2. Handle Accounting Jobs
+      const accountingJobs = await claimAccountingJobs();
+      if (accountingJobs && accountingJobs.length > 0) {
+        await Promise.all(accountingJobs.map(async (job) => {
+          try {
+            await accountingProcessor.processJob(job.id);
+          } catch (jobError) {
+            console.error(`❌ Error processing accounting job ${job.id}:`, jobError);
+          }
+        }));
+      }
+
+      if ((!receiptJobs || receiptJobs.length === 0) && (!accountingJobs || accountingJobs.length === 0)) {
         const sleepTime = Math.floor(Math.random() * 2000) + 1000;
         await new Promise(resolve => setTimeout(resolve, sleepTime));
       }
     } catch (error) {
       logger.info({ error }, "Worker loop error")
       console.error('❌ Worker loop error:', error);
-      // Wait a bit before retrying after error
       await new Promise(resolve => setTimeout(resolve, 5000));
     }
   }

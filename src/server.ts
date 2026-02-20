@@ -3,6 +3,8 @@ import cors from "cors";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import processRoute from "./routes/process";
+import syncRoute from "./api/sync";
+import webhookRoute from "./api/webhooks";
 import { addClient } from "./utils/sse";
 
 const app = express();
@@ -11,6 +13,8 @@ app.use(cors());
 app.use(express.json());
 
 app.use("/process", processRoute);
+app.use("/sync", syncRoute);
+app.use("/webhooks", webhookRoute);
 
 app.get("/events", (req, res) => {
   const token = req.query.token as string;
