@@ -36,7 +36,7 @@ async function claimReceiptJobs() {
       lt(Receipts.lockedAt, fiveMinutesAgo)
     ))
     .returning();
-  
+
   if (stuckResult.length > 0) {
     logger.info({ count: stuckResult.length }, "Marked jobs as stuck");
   }
@@ -61,8 +61,7 @@ async function claimReceiptJobs() {
 }
 
 async function workerLoop() {
-  console.log('🚀 Receipt & Accounting Job Processing Worker started...');
-
+  logger.info("Receipt & Accounting Job Processing Worker started...")
   while (true) {
     try {
       // 1. Handle Receipt Jobs
@@ -72,7 +71,7 @@ async function workerLoop() {
           try {
             await processJob(job);
           } catch (jobError) {
-            console.error(`❌ Error processing receipt job ${job.syncJobId}:`, jobError);
+            logger.info({ jobId: job.id, error: jobError }, `Error processing receipt job ${job.id}:`);
           }
         }));
       }
@@ -84,7 +83,7 @@ async function workerLoop() {
           try {
             await accountingProcessor.processJob(job.id);
           } catch (jobError) {
-            console.error(`❌ Error processing accounting job ${job.id}:`, jobError);
+            logger.info({ jobId: job.id, error: jobError }, `Error processing accounting job ${job.id}:`);
           }
         }));
       }
@@ -94,14 +93,13 @@ async function workerLoop() {
         await new Promise(resolve => setTimeout(resolve, sleepTime));
       }
     } catch (error) {
-      logger.info({ error }, "Worker loop error")
-      console.error('❌ Worker loop error:', error);
+      logger.info({ error }, 'Worker loop error:');
       await new Promise(resolve => setTimeout(resolve, 5000));
     }
   }
 }
 
 workerLoop().catch(err => {
-  console.error('Fatal worker error:', err);
+  logger.info({ error: err }, 'Fatal worker error:');
   process.exit(1);
 });

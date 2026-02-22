@@ -201,36 +201,45 @@ export const contacts = pgTable("contacts", {
 export const transactions = pgTable("transactions", {
   id: text("id").primaryKey(),
   externalId: text("external_id"), // accounting platform id
-  amount: integer("amount").notNull(),
-  payee: text("payee").notNull(),
   userId: text("user_id").notNull(),
   transactionId: text("transaction_id").notNull(),
-  organizationId: integer("organization_id").references(() => teams.id),
-  notes: text("notes"),
+  organizationId: integer("organization_id")
+    .references(() => teams.id),
+  amount: numeric("amount").notNull(),
+  payee: text("payee").notNull(),
   type: varchar("type", { length: 20 }).notNull(), // expense | income
+  notes: text("notes"),
   date: timestamp("date", { precision: 3 }).notNull(),
-  accountId: text("account_id").references(() => accounts.id, { onDelete: "cascade" }).notNull(),
-  categoryId: text("category_id").references(() => categories.id, { onDelete: "set null" }),
+  accountId: text("account_id").notNull(),
+  categoryId: integer("category_id"),
   totalAmount: integer("total_amount"),
+  accountingPlatform: varchar("accounting_platform", { length: 20 }),
+  accountingId: text("accounting_id"),
+  accountingUrl: text("accounting_url"),
   status: varchar("status", { length: 20 }).default("draft"),
+  jobId: uuid("job_id").references(() => SyncJobs.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
 export const transactionLineItems = pgTable("transaction_line_items", {
   id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  organizationId: integer("organization_id")
+    .references(() => teams.id),
+  jobId: uuid("job_id").references(() => SyncJobs.id),
   externalId: text("external_id"), // accounting platform id
   transactionId: text("transaction_id")
     .references(() => transactions.id, { onDelete: "cascade" })
     .notNull(),
   productName: varchar("product_name").notNull(),
-  quantity: integer("quantity").notNull(),
-  price: integer("price").notNull(),
-  taxRate: integer("tax_rate"),
+  quantity: numeric("quantity").notNull(),
+  price: numeric("price").notNull(),
+  taxRate: numeric("tax_rate"),
   taxable: boolean("taxable").default(true).notNull(),
-  discount: integer("discount").default(0).notNull(),
-  totalAmount: integer("total_amount").notNull(),
-  lineTotal: integer("line_total").notNull(),
+  discount: numeric("discount").notNull(),
+  totalAmount: numeric("total_amount").notNull(),
+  lineTotal: numeric("line_total").notNull(),
   lineAccountId: text("line_account_id"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),

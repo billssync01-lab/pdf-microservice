@@ -19,6 +19,7 @@ export async function updateReceiptData(
   rawData: Record<string, any>,
   fileUrl?: string
 ) {
+  logger.info({ receiptId, organizationId }, "Updating receipt data for receipt and organization:")
   const result = await db.update(Receipts)
     .set({
       rawData,
@@ -28,12 +29,13 @@ export async function updateReceiptData(
     })
     .where(eq(Receipts.id, receiptId))
     .returning();
-
+logger.info({ receiptId, organizationId }, "Updated receipt data for receipt and organization:")
   await notifyStatusUpdate(organizationId, receiptId, 'parsed', { fileUrl });
   return result[0];
 }
 
 export async function updateReceiptError(organizationId: number, receiptId: number, errorMessage: string) {
+  logger.info({ receiptId, organizationId, errorMessage }, "Updating receipt with error message for receipt and organization:")
   const result = await db.update(Receipts)
     .set({
       status: 'parsing failed',
@@ -42,18 +44,20 @@ export async function updateReceiptError(organizationId: number, receiptId: numb
     })
     .where(eq(Receipts.id, receiptId))
     .returning();
-
+logger.info({ receiptId, organizationId, errorMessage }, "Updated receipt with error message for receipt and organization:")
   await notifyStatusUpdate(organizationId, receiptId, 'parsing failed', { error: errorMessage });
   return result;
 }
 
 export async function deductCredits(userId: number, amount: number) {
+  logger.info({ userId, amount }, "Deducting credits for user:")
   await db
     .update(users)
     .set({
       credits: sql`${users.credits} - ${amount}`,
     })
     .where(eq(users.id, userId));
+  logger.info({ userId, amount }, "Deducted credits for user:")
 }
 
 export async function processReceiptPage(
@@ -65,6 +69,7 @@ export async function processReceiptPage(
   type: "general" | "mileage",
   pageType: string = "single"
 ) {
+  logger.info({ receiptId, userId, category, documentType, type, pageType }, "Processing receipt page with details:")
   try {
     // Update status to inprogress
     await db.update(Receipts)
@@ -72,12 +77,13 @@ export async function processReceiptPage(
       .where(eq(Receipts.id, receiptId));
 
     const receipt = (await db.select().from(Receipts).where(eq(Receipts.id, receiptId)))[0];
+    logger.info({ receiptId, organizationId: receipt?.organizationId }, "Fetched receipt details for processing:")
     if (!receipt || !receipt.fileUrl) {
       throw new Error("Receipt not found or missing file URL");
     }
 
     await notifyStatusUpdate(receipt.organizationId, receiptId, 'inprogress');
-
+logger.info({ receiptId, organizationId: receipt.organizationId }, "Notified status update to inprogress for receipt:")
     // Fetch file buffer
     const response = await axios.get(receipt.fileUrl, { responseType: 'arraybuffer' });
     const fileBuffer = Buffer.from(response.data);
@@ -89,6 +95,7 @@ export async function processReceiptPage(
       logger.info({ receiptId }, "Converting PDF to image for extraction");
       const imagePaths = await pdfToImages(fileBuffer, `job-${receiptId}`);
       if (imagePaths.length === 0) {
+        logger.info({ receiptId }, "PDF to image conversion failed, no images generated");
         throw new Error("Failed to convert PDF to images");
       }
       // Use the first page for now
@@ -102,11 +109,13 @@ export async function processReceiptPage(
 
     // Build prompt
     const prompt = await builder(category, type, documentType, pageType);
-
+logger.info({ receiptId, category, type, documentType, pageType }, "Built prompt for receipt processing:")
     // Extract with vision
     const result = await extractWithVision(imageBuffer, prompt, type);
     if (result) {
+      logger.info({ receiptId, result }, "Extraction successful for receipt:")
       await deductCredits(userId, 1);
+      logger.info({ receiptId, userId }, "Deducted credits for receipt processing:")
     }
 
     // Save results
@@ -114,7 +123,7 @@ export async function processReceiptPage(
     return true;
 
   } catch (error: any) {
-    console.error(`Error processing receipt ${receiptId}:`, error);
+    logger.info({ receiptId, error }, `Error processing receipt ${receiptId}:`);
     // We need organizationId here. If receipt fetch failed, we might not have it.
     // But if we have receiptId, we can probably fetch it or assume it's available.
     // Let's try to get it from the receipt we fetched.
@@ -122,6 +131,7 @@ export async function processReceiptPage(
     const orgId = results[0]?.organizationId;
     if (orgId) {
         await updateReceiptError(orgId, receiptId, error.message || "Unknown error");
+        logger.info({ receiptId, organizationId: orgId, error }, "Updated receipt with error message for receipt and organization:")
     }
     return false;
   }

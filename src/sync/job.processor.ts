@@ -7,6 +7,7 @@ import { ZohoAdapter } from "./adapters/zoho.adapter";
 import { ReferenceResolver } from "./reference.resolver";
 import { PayloadBuilder } from "./payload.builder";
 import { AccountingAdapter } from "./adapters/accounting.adapter";
+import logger from "../utils/logger";
 
 export class JobProcessor {
   private teamSettings: any;
@@ -34,7 +35,10 @@ export class JobProcessor {
         ),
       });
 
-      if (!integration) throw new Error("Integration not found");
+      if (!integration) {
+        await db.update(SyncJobs).set({ status: "error", error: "Integration not found", completedAt: new Date() }).where(eq(SyncJobs.id, jobId));
+        throw new Error("Integration not found");
+      }
 
       const adapter = this.getAdapter((job.payload as any).platform, integration);
       const resolver = new ReferenceResolver(adapter, job.organizationId, team?.settings || {});
@@ -48,19 +52,21 @@ export class JobProcessor {
         try {
           await this.processItem(item, adapter, resolver, (job.payload as any).platform);
           completed++;
-          await db.update(SyncJobs).set({ 
+          await db.update(SyncJobs).set({
             progress: Math.round((completed / items.length) * 100),
-            successCount: completed 
+            successCount: completed
           }).where(eq(SyncJobs.id, jobId));
         } catch (error: any) {
-          console.error(`Item ${item.id} failed:`, error);
+          logger.info({ jobId, error }, `Item ${item.id} failed:`);
           await db.update(SyncJobItems).set({ status: "failed", error: error.message }).where(eq(SyncJobItems.id, item.id));
+          await db.update(SyncJobs).set({ status: "failed", completedAt: new Date() }).where(eq(SyncJobs.id, jobId));
+          return;
         }
       }
 
       await db.update(SyncJobs).set({ status: "completed", completedAt: new Date() }).where(eq(SyncJobs.id, jobId));
     } catch (error: any) {
-      console.error(`Job ${jobId} failed:`, error);
+      logger.info({ jobId, error }, `Job ${jobId} failed:`);
       await db.update(SyncJobs).set({ status: "failed", error: error.message }).where(eq(SyncJobs.id, jobId));
     }
   }
@@ -92,15 +98,15 @@ export class JobProcessor {
       result = await adapter.createInvoice!(payload);
     }
 
-    await db.update(SyncJobItems).set({ 
-      status: "completed", 
+    await db.update(SyncJobItems).set({
+      status: "completed",
       externalId: result.id,
-      result: result as any 
+      result: result as any
     }).where(eq(SyncJobItems.id, item.id));
 
-    await db.update(transactions).set({ 
-      externalId: result.id, 
-      status: "synced" 
+    await db.update(transactions).set({
+      externalId: result.id,
+      status: "synced"
     }).where(eq(transactions.id, transaction.id));
   }
 
