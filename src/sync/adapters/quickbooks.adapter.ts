@@ -2,6 +2,7 @@ import { db } from "../../db";
 import { Integrations } from "../../schema";
 import { eq } from "drizzle-orm";
 import { AccountingAdapter } from "./accounting.adapter";
+import logger from "../../utils/logger";
 
 export class QuickBooksAdapter implements AccountingAdapter {
   private integration: any;
@@ -30,6 +31,7 @@ export class QuickBooksAdapter implements AccountingAdapter {
     });
 
     const data = await res.json();
+    logger.info({ res }, "Quickbooks refresh failed")
     if (!res.ok) throw new Error(`QB Refresh Failed: ${data.error}`);
 
     this.integration.accessToken = data.access_token;
@@ -42,6 +44,8 @@ export class QuickBooksAdapter implements AccountingAdapter {
       expiresAt: this.integration.expiresAt,
       updatedAt: new Date(),
     }).where(eq(Integrations.id, this.integration.id));
+    logger.info("Integration Updated")
+
   }
 
   private async fetchWithToken(endpoint: string, options: any = {}): Promise<any> {
@@ -67,19 +71,23 @@ export class QuickBooksAdapter implements AccountingAdapter {
   }
 
   async createContact(data: any): Promise<{ id: string }> {
+    logger.info({ data }, "Creating contact for quickbooks")
     const payload = {
       DisplayName: data.name,
       PrimaryEmailAddr: data.email ? { Address: data.email } : undefined,
     };
     const type = data.type === 'customer' ? 'customer' : 'vendor';
+    logger.info({ type, payload }, "getting payload and type")
     const response = await this.fetchWithToken(`/v3/company/${this.integration.realmId}/${type}`, {
       method: "POST",
       body: JSON.stringify(payload),
     });
+    logger.info({ response }, "Quickbooks contact creation completed")
     return { id: response[type.charAt(0).toUpperCase() + type.slice(1)].Id };
   }
 
   async createProduct(data: any): Promise<{ id: string }> {
+    logger.info({ data }, "Creating contact for quickbooks")
     const payload = {
       Name: data.name,
       Type: "Service",
