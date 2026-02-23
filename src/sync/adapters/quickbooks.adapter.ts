@@ -7,10 +7,53 @@ import logger from "../../utils/logger";
 export class QuickBooksAdapter implements AccountingAdapter {
   private integration: any;
   private apiBaseUrl: string;
+  private refreshPromise: Promise<void> | null = null;
 
   constructor(integration: any) {
     this.integration = integration;
     this.apiBaseUrl = process.env.QUICKBOOKS_API_URL || "https://sandbox-quickbooks.api.intuit.com";
+  }
+
+  private isTokenExpired(): boolean {
+    if (!this.integration.expiresAt) {
+      logger.warn({ integrationId: this.integration.id }, "Token expiry date not set");
+      return true;
+    }
+
+    const expiryTime = new Date(this.integration.expiresAt).getTime();
+    const now = Date.now();
+    const bufferTime = 5 * 60 * 1000;
+
+    const isExpired = now > (expiryTime - bufferTime);
+
+    if (isExpired) {
+      logger.info({ 
+        integrationId: this.integration.id, 
+        expiresAt: this.integration.expiresAt, 
+        bufferMinutes: 5 
+      }, "Token is expired or expiring soon");
+    }
+
+    return isExpired;
+  }
+
+  private async ensureValidToken(): Promise<void> {
+    if (!this.isTokenExpired()) {
+      logger.debug({ integrationId: this.integration.id }, "Token is still valid, no refresh needed");
+      return;
+    }
+
+    if (!this.refreshPromise) {
+      logger.info({ integrationId: this.integration.id }, "Starting token refresh");
+      this.refreshPromise = this.refreshToken()
+        .finally(() => {
+          this.refreshPromise = null;
+        });
+    } else {
+      logger.info({ integrationId: this.integration.id }, "Token refresh already in progress, waiting for existing refresh");
+    }
+
+    await this.refreshPromise;
   }
 
   async refreshToken(): Promise<void> {
@@ -18,38 +61,69 @@ export class QuickBooksAdapter implements AccountingAdapter {
     const clientSecret = process.env.QUICKBOOKS_CLIENT_SECRET;
     const tokenUrl = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer";
 
-    const res = await fetch(tokenUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        Authorization: "Basic " + Buffer.from(`${clientId}:${clientSecret}`).toString("base64"),
-      },
-      body: new URLSearchParams({
-        grant_type: "refresh_token",
-        refresh_token: this.integration.refreshToken,
-      }),
-    });
+    logger.info({ integrationId: this.integration.id, provider: "quickbooks" }, "Attempting to refresh QuickBooks token");
 
-    const data = await res.json();
-    logger.info({ res }, "Quickbooks refresh failed")
-    if (!res.ok) throw new Error(`QB Refresh Failed: ${data.error}`);
+    try {
+      const res = await fetch(tokenUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: "Basic " + Buffer.from(`${clientId}:${clientSecret}`).toString("base64"),
+        },
+        body: new URLSearchParams({
+          grant_type: "refresh_token",
+          refresh_token: this.integration.refreshToken,
+        }),
+      });
 
-    this.integration.accessToken = data.access_token;
-    this.integration.refreshToken = data.refresh_token || this.integration.refreshToken;
-    this.integration.expiresAt = new Date(Date.now() + data.expires_in * 1000);
+      const data = await res.json();
 
-    await db.update(Integrations).set({
-      accessToken: this.integration.accessToken,
-      refreshToken: this.integration.refreshToken,
-      expiresAt: this.integration.expiresAt,
-      updatedAt: new Date(),
-    }).where(eq(Integrations.id, this.integration.id));
-    logger.info("Integration Updated")
+      if (!res.ok) {
+        logger.error({ 
+          integrationId: this.integration.id, 
+          error: data.error,
+          errorDescription: data.error_description,
+          statusCode: res.status
+        }, "QuickBooks token refresh failed");
 
+        if (data.error === "invalid_grant") {
+          await db.update(Integrations).set({
+            metadata: { ...this.integration.metadata, authStatus: "expired", lastAuthError: data.error_description },
+            updatedAt: new Date(),
+          }).where(eq(Integrations.id, this.integration.id));
+
+          throw new Error(`QB Token Expired or Revoked: ${data.error_description || data.error}. Re-authentication required.`);
+        }
+
+        throw new Error(`QB Refresh Failed: ${data.error} - ${data.error_description}`);
+      }
+
+      this.integration.accessToken = data.access_token;
+      this.integration.refreshToken = data.refresh_token || this.integration.refreshToken;
+      this.integration.expiresAt = new Date(Date.now() + data.expires_in * 1000);
+
+      await db.update(Integrations).set({
+        accessToken: this.integration.accessToken,
+        refreshToken: this.integration.refreshToken,
+        expiresAt: this.integration.expiresAt,
+        metadata: { ...this.integration.metadata, authStatus: "active" },
+        updatedAt: new Date(),
+      }).where(eq(Integrations.id, this.integration.id));
+
+      logger.info({ integrationId: this.integration.id, expiresAt: this.integration.expiresAt }, "QuickBooks token refreshed successfully");
+    } catch (error: any) {
+      logger.error({ 
+        integrationId: this.integration.id, 
+        error: error.message,
+        stack: error.stack 
+      }, "Exception during QuickBooks token refresh");
+      throw error;
+    }
   }
 
   private async fetchWithToken(endpoint: string, options: any = {}): Promise<any> {
-    // ... same as before but uses this.integration.accessToken
+    await this.ensureValidToken();
+
     const res = await fetch(`${this.apiBaseUrl}${endpoint}`, {
       ...options,
       headers: {
@@ -61,7 +135,13 @@ export class QuickBooksAdapter implements AccountingAdapter {
     });
 
     if (res.status === 401) {
-      await this.refreshToken();
+      logger.warn({ 
+        integrationId: this.integration.id, 
+        endpoint, 
+        statusCode: 401 
+      }, "Received 401 despite token validation, attempting refresh");
+
+      await this.ensureValidToken();
       return this.fetchWithToken(endpoint, options);
     }
 
@@ -77,7 +157,7 @@ export class QuickBooksAdapter implements AccountingAdapter {
       PrimaryEmailAddr: data.email ? { Address: data.email } : undefined,
     };
     const type = data.type === 'customer' ? 'customer' : 'vendor';
-    logger.info({ type, payload }, "getting payload and type")
+    logger.info({ type, payload, realmid: this.integration.realmId }, "getting payload and type")
     const response = await this.fetchWithToken(`/v3/company/${this.integration.realmId}/${type}`, {
       method: "POST",
       body: JSON.stringify(payload),

@@ -100,6 +100,7 @@ export class JobProcessor {
 
       let completed = 0;
       let failed = 0;
+      let authError = false;
 
       for (const item of items) {
         try {
@@ -114,6 +115,34 @@ export class JobProcessor {
 
           logger.info({ jobId, itemId: item.id, successCount: completed, progress: Math.round((completed / items.length) * 100) }, "Job item completed successfully");
         } catch (error: any) {
+          const isAuthError = error.message?.includes("Token Expired") || 
+                             error.message?.includes("Revoked") || 
+                             error.message?.includes("Re-authentication");
+
+          if (isAuthError) {
+            logger.error({ 
+              jobId, 
+              itemId: item.id, 
+              error: error.message,
+              authError: true
+            }, "Authentication/Authorization error - stopping job processing");
+            authError = true;
+
+            await db.update(SyncJobItems).set({ 
+              status: "failed", 
+              error: error.message 
+            }).where(eq(SyncJobItems.id, item.id));
+
+            await db.update(SyncJobs).set({ 
+              status: "failed",
+              error: "Integration authentication failed. Please re-authenticate the integration.",
+              completedAt: new Date(),
+              errorCount: failed + 1
+            }).where(eq(SyncJobs.id, jobId));
+
+            break;
+          }
+
           failed++;
           logger.error({ 
             jobId, 
@@ -131,6 +160,11 @@ export class JobProcessor {
             errorCount: failed 
           }).where(eq(SyncJobs.id, jobId));
         }
+      }
+
+      if (authError) {
+        logger.info({ jobId }, "Job stopped due to authentication error");
+        return;
       }
 
       const finalStatus = failed === 0 ? "completed" : failed === items.length ? "failed" : "partial";
@@ -187,29 +221,56 @@ export class JobProcessor {
         throw new Error(`Transaction not found: ${item.referenceId}`);
       }
 
-      logger.info({ itemId, transactionId: transaction.id }, "Fetching transaction line items");
+      logger.info({ itemId, transactionId: transaction.id, type: transaction.type }, "Fetching transaction line items");
       const lineItems = await db.query.transactionLineItems.findMany({
         where: eq(transactionLineItems.transactionId, transaction.id),
       });
 
       logger.info({ itemId, lineItemCount: lineItems.length }, "Line items fetched");
 
-      logger.info({ itemId, payee: transaction.payee }, "Resolving contact reference");
-      const contactId = await resolver.resolveContact(transaction.payee);
+      logger.info({ itemId, payee: transaction.payee, platform }, "Resolving contact reference");
+      let contactId: string;
+      try {
+        contactId = await resolver.resolveContact(transaction.payee);
+        logger.info({ itemId, contactId }, "Contact resolved successfully");
+      } catch (error: any) {
+        logger.error({ itemId, payee: transaction.payee, error: error.message }, "Failed to resolve contact");
+        throw new Error(`Contact resolution failed: ${error.message}`);
+      }
 
-      logger.info({ itemId, accountName: "General Expense" }, "Resolving account reference");
-      const accountId = await resolver.resolveAccount("General Expense");
+      logger.info({ itemId, accountName: "General Expense", platform }, "Resolving account reference");
+      let accountId: string;
+      try {
+        accountId = await resolver.resolveAccount("General Expense");
+        logger.info({ itemId, accountId }, "Account resolved successfully");
+      } catch (error: any) {
+        logger.error({ itemId, error: error.message }, "Failed to resolve account");
+        throw new Error(`Account resolution failed: ${error.message}`);
+      }
 
       const references = { contactId, accountId };
       logger.info({ itemId, contactId, accountId }, "Building payload for accounting platform");
-      const payload = PayloadBuilder.build(platform, transaction, lineItems, references, this.teamSettings);
+      let payload: any;
+      try {
+        payload = PayloadBuilder.build(platform, transaction, lineItems, references, this.teamSettings);
+        logger.info({ itemId, payloadKeys: Object.keys(payload) }, "Payload built successfully");
+      } catch (error: any) {
+        logger.error({ itemId, error: error.message }, "Failed to build payload");
+        throw new Error(`Payload build failed: ${error.message}`);
+      }
 
       logger.info({ itemId, transactionType: transaction.type, platform }, `Creating ${transaction.type} in ${platform}`);
       let result: CreateTransactionResponse;
-      if (transaction.type === 'expense') {
-        result = await adapter.createExpense!(payload);
-      } else {
-        result = await adapter.createInvoice!(payload);
+      try {
+        if (transaction.type === 'expense') {
+          result = await adapter.createExpense!(payload);
+        } else {
+          result = await adapter.createInvoice!(payload);
+        }
+        logger.info({ itemId, externalId: result.id }, `${transaction.type} created successfully in ${platform}`);
+      } catch (error: any) {
+        logger.error({ itemId, transactionType: transaction.type, platform, error: error.message }, `Failed to create ${transaction.type} in ${platform}`);
+        throw error;
       }
 
       if (!result || !result.id) {
@@ -251,11 +312,13 @@ export class JobProcessor {
             }).where(eq(transactionLineItems.id, lineItem.id));
 
             logger.info({ itemId, lineItemId: lineItem.id, lineAccountId: matchedLineItem.accountRef }, "Line item updated with account reference");
+          } else {
+            logger.warn({ itemId, lineItemId: lineItem.id, productName: lineItem.productName }, "Could not match line item in API response");
           }
         }
       }
 
-      logger.info({ itemId, externalId: result.id }, "Job item processing completed successfully");
+      logger.info({ itemId, externalId: result.id, platform }, "Job item processing completed successfully");
     } catch (error: any) {
       logger.error({ 
         itemId, 
