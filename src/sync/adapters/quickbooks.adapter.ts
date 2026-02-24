@@ -63,14 +63,14 @@ export class QuickBooksAdapter implements AccountingAdapter {
           this.integration = latestIntegration; // Update memory with latest DB data
           
           // Check if DB already has a valid token now
-          // if (!this.isTokenExpired(latestIntegration)) {
-          //   logger.info({ integrationId: this.integration.id }, "Token was refreshed by another process, skipping");
-          //   return;
-          // }
+          if (!this.isTokenExpired(latestIntegration)) {
+            logger.info({ integrationId: this.integration.id }, "Token was refreshed by another process, skipping");
+            return;
+          }
         }
 
         // 5. Perform the actual refresh if still expired
-        // await this.refreshToken();
+        await this.refreshToken();
       } finally {
         this.refreshPromise = null;
       }
