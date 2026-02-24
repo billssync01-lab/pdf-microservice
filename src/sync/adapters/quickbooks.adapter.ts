@@ -63,14 +63,14 @@ export class QuickBooksAdapter implements AccountingAdapter {
           this.integration = latestIntegration; // Update memory with latest DB data
           
           // Check if DB already has a valid token now
-          if (!this.isTokenExpired(latestIntegration)) {
-            logger.info({ integrationId: this.integration.id }, "Token was refreshed by another process, skipping");
-            return;
-          }
+          // if (!this.isTokenExpired(latestIntegration)) {
+          //   logger.info({ integrationId: this.integration.id }, "Token was refreshed by another process, skipping");
+          //   return;
+          // }
         }
 
         // 5. Perform the actual refresh if still expired
-        await this.refreshToken();
+        // await this.refreshToken();
       } finally {
         this.refreshPromise = null;
       }
@@ -84,7 +84,7 @@ export class QuickBooksAdapter implements AccountingAdapter {
     const clientSecret = process.env.QUICKBOOKS_CLIENT_SECRET;
     const tokenUrl = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer";
 
-    logger.info({ integrationId: this.integration.id, provider: "quickbooks" }, "Attempting to refresh QuickBooks token");
+    logger.info({ integrationId: this.integration.id, clientId: clientId, clientSecret: clientSecret, provider: "quickbooks" }, "Attempting to refresh QuickBooks token");
 
     try {
       const auth = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
