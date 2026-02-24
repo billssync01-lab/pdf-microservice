@@ -1,6 +1,6 @@
 import { db } from "../db";
-import { teams, contacts, accounts, categories, Inventory, Integrations } from "../schema";
-import { eq, and } from "drizzle-orm";
+import { teams } from "../schema";
+import { eq } from "drizzle-orm";
 import { AccountingAdapter } from "./adapters/accounting.adapter";
 
 export class ReferenceResolver {
@@ -14,98 +14,117 @@ export class ReferenceResolver {
     this.teamSettings = teamSettings;
   }
 
+  /* -------------------------------- CONTACT -------------------------------- */
+
   async resolveContact(name: string, email?: string): Promise<string> {
-    const existing = await db.query.contacts.findFirst({
-      where: and(
-        eq(contacts.organizationId, this.organizationId),
-        eq(contacts.name, name)
-      ),
-    });
+    // 1️⃣ Query QuickBooks
+    const existing = await this.adapter.query("Customer", `DisplayName = '${this.escape(name)}'`);
 
-    if (existing?.externalId) return existing.externalId;
+    if (existing?.length) {
+      return existing[0].Id;
+    }
 
+    // 2️⃣ Create if allowed
     if (this.teamSettings.autoCreateList === true) {
       const { id } = await this.adapter.createContact({ name, email });
-      if (existing) {
-        await db.update(contacts).set({ externalId: id }).where(eq(contacts.id, existing.id));
-      } else {
-        await db.insert(contacts).values({
-          id: crypto.randomUUID(),
-          name,
-          email,
-          organizationId: this.organizationId,
-          externalId: id,
-          userId: "system", // default
-        });
-      }
       return id;
     }
 
+    // 3️⃣ Fallback default
     if (!this.teamSettings.defaultContactId) {
-      const { id } = await this.adapter.createContact({ name: "BillsDeck customer", email: "default@example.com" });
+      const { id } = await this.adapter.createContact({
+        name: "BillsDeck customer",
+        email: "default@example.com",
+      });
+
       this.teamSettings.defaultContactId = id;
-      await db.update(teams).set({ settings: this.teamSettings }).where(eq(teams.id, this.organizationId));
+      await db.update(teams)
+        .set({ settings: this.teamSettings })
+        .where(eq(teams.id, this.organizationId));
+
       return id;
     }
 
     return this.teamSettings.defaultContactId;
   }
 
-  async resolveAccount(name: string, type?: string): Promise<string> {
-    const existing = await db.query.accounts.findFirst({
-      where: and(
-        eq(accounts.organizationId, this.organizationId),
-        eq(accounts.name, name)
-      ),
-    });
+  /* -------------------------------- ACCOUNT -------------------------------- */
 
-    if (existing?.externalId) return existing.externalId;
+  async resolveAccount(name: string, type?: string): Promise<string> {
+    const existing = await this.adapter.query("Account", `Name = '${this.escape(name)}'`);
+
+    if (existing?.length) {
+      return existing[0].Id;
+    }
 
     if (this.teamSettings.autoCreateList === true) {
       const { id } = await this.adapter.createAccount({ name, type });
-      if (existing) {
-        await db.update(accounts).set({ externalId: id }).where(eq(accounts.id, existing.id));
-      }
       return id;
     }
 
     if (!this.teamSettings.defaultAccountId) {
-      const { id } = await this.adapter.createAccount({ name: "Uncategorized Expense", type: "Expenses" });
+      const { id } = await this.adapter.createAccount({
+        name: "Uncategorized Expense",
+        type: "Expense",
+      });
+
       this.teamSettings.defaultAccountId = id;
-      await db.update(teams).set({ settings: this.teamSettings }).where(eq(teams.id, this.organizationId));
+
+      await db.update(teams)
+        .set({ settings: this.teamSettings })
+        .where(eq(teams.id, this.organizationId));
+
       return id;
     }
 
     return this.teamSettings.defaultAccountId;
   }
 
-  async resolveProduct(name: string, price: number): Promise<string> {
-    const existing = await db.query.Inventory.findFirst({
-      where: and(
-        eq(Inventory.organizationId, this.organizationId),
-        eq(Inventory.name, name)
-      ),
-    });
+  /* -------------------------------- PRODUCT -------------------------------- */
 
-    if (existing?.externalId) return existing.externalId;
+  async resolveProduct(name: string, price: number): Promise<string> {
+    const existing = await this.adapter.query("Item", `Name = '${this.escape(name)}'`);
+
+    if (existing?.length) {
+      return existing[0].Id;
+    }
 
     if (this.teamSettings.autoCreateList === true) {
       const incomeAccountId = await this.resolveAccount("Services", "Income");
-      const { id } = await this.adapter.createProduct({ name, price, incomeAccountId });
-      if (existing) {
-        await db.update(Inventory).set({ externalId: id }).where(eq(Inventory.id, existing.id));
-      }
+
+      const { id } = await this.adapter.createProduct({
+        name,
+        price,
+        incomeAccountId,
+      });
+
       return id;
     }
 
-    // Default missing logic
     if (!this.teamSettings.defaultProductId) {
-      const { id } = await this.adapter.createProduct({ name: "Sales", price: 0, incomeAccountId: "" });
+      const incomeAccountId = await this.resolveAccount("Services", "Income");
+
+      const { id } = await this.adapter.createProduct({
+        name: "Sales",
+        price: 0,
+        incomeAccountId,
+      });
+
       this.teamSettings.defaultProductId = id;
-      await db.update(teams).set({ settings: this.teamSettings }).where(eq(teams.id, this.organizationId));
+
+      await db.update(teams)
+        .set({ settings: this.teamSettings })
+        .where(eq(teams.id, this.organizationId));
+
       return id;
     }
 
     return this.teamSettings.defaultProductId;
+  }
+
+  /* ----------------------------- Helper: Escape ----------------------------- */
+
+  private escape(value: string) {
+    return value.replace(/'/g, "\\'");
   }
 }

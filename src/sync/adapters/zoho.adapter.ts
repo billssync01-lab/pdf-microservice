@@ -214,4 +214,24 @@ export class ZohoAdapter implements AccountingAdapter {
     const response = await this.fetchWithToken(url);
     return response.items || [];
   }
+
+  async query(entity: string, criteria: string): Promise<any[]> {
+    // This is a basic implementation to support the QuickBooks-style queries used in ReferenceResolver
+    if (criteria.includes("DisplayName = '") || criteria.includes("Name = '")) {
+      const name = criteria.match(/= '(.*)'/)?.[1];
+      if (name) {
+        if (entity === "Customer" || entity === "Vendor") {
+          const res = await this.fetchWithToken(`/contacts?contact_name=${encodeURIComponent(name)}`);
+          return res.contacts || [];
+        } else if (entity === "Account") {
+          const res = await this.fetchWithToken(`/chartofaccounts?account_name=${encodeURIComponent(name)}`);
+          return res.chartofaccounts || [];
+        } else if (entity === "Item") {
+          const res = await this.fetchWithToken(`/items?name=${encodeURIComponent(name)}`);
+          return res.items || [];
+        }
+      }
+    }
+    return [];
+  }
 }

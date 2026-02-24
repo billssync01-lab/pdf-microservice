@@ -372,4 +372,10 @@ export class QuickBooksAdapter implements AccountingAdapter {
     const response = await this.fetchWithToken(`/v3/company/${this.integration.realmId}/query?query=${encodeURIComponent(query)}`);
     return response.QueryResponse.Item || [];
   }
+
+  async query(entity: string, criteria: string): Promise<any[]> {
+    const query = `select * from ${entity} where ${criteria}`;
+    const response = await this.fetchWithToken(`/v3/company/${this.integration.realmId}/query?query=${encodeURIComponent(query)}`);
+    return response.QueryResponse[entity] || [];
+  }
 }

@@ -30,4 +30,5 @@ export interface AccountingAdapter {
   fetchTaxRates(): Promise<any[]>;
   fetchContacts(type?: 'customer' | 'vendor', lastUpdated?: Date): Promise<any[]>;
   fetchProducts(lastUpdated?: Date): Promise<any[]>;
+  query(entity: string, criteria: string): Promise<any[]>;
 }

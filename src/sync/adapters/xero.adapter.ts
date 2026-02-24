@@ -207,4 +207,25 @@ export class XeroAdapter implements AccountingAdapter {
     const response = await this.fetchWithToken("/Items");
     return response.Items || [];
   }
+
+  async query(entity: string, criteria: string): Promise<any[]> {
+    // This is a basic implementation to support the QuickBooks-style queries used in ReferenceResolver
+    if (criteria.includes("DisplayName = '") || criteria.includes("Name = '")) {
+      const name = criteria.match(/= '(.*)'/)?.[1];
+      if (name) {
+        const encodedName = encodeURIComponent(name);
+        if (entity === "Customer" || entity === "Vendor") {
+          const res = await this.fetchWithToken(`/Contacts?where=Name%3D%3D%22${encodedName}%22`);
+          return res.Contacts || [];
+        } else if (entity === "Account") {
+          const res = await this.fetchWithToken(`/Accounts?where=Name%3D%3D%22${encodedName}%22`);
+          return res.Accounts || [];
+        } else if (entity === "Item") {
+          const res = await this.fetchWithToken(`/Items?where=Name%3D%3D%22${encodedName}%22`);
+          return res.Items || [];
+        }
+      }
+    }
+    return [];
+  }
 }
