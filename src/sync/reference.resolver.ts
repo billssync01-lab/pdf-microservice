@@ -42,7 +42,7 @@ export class ReferenceResolver {
     }
 
     if (!this.teamSettings.defaultContactId) {
-      const { id } = await this.adapter.createContact({ name: "Default Contact", email: "default@example.com" });
+      const { id } = await this.adapter.createContact({ name: "BillsDeck customer", email: "default@example.com" });
       this.teamSettings.defaultContactId = id;
       await db.update(teams).set({ settings: this.teamSettings }).where(eq(teams.id, this.organizationId));
       return id;
@@ -70,7 +70,7 @@ export class ReferenceResolver {
     }
 
     if (!this.teamSettings.defaultAccountId) {
-      const { id } = await this.adapter.createAccount({ name: "Default Account", type: "Expense" });
+      const { id } = await this.adapter.createAccount({ name: "Uncategorized Expense", type: "Expenses" });
       this.teamSettings.defaultAccountId = id;
       await db.update(teams).set({ settings: this.teamSettings }).where(eq(teams.id, this.organizationId));
       return id;
@@ -90,7 +90,7 @@ export class ReferenceResolver {
     if (existing?.externalId) return existing.externalId;
 
     if (this.teamSettings.autoCreateList === true) {
-      const incomeAccountId = await this.resolveAccount("Sales", "Income");
+      const incomeAccountId = await this.resolveAccount("Services", "Income");
       const { id } = await this.adapter.createProduct({ name, price, incomeAccountId });
       if (existing) {
         await db.update(Inventory).set({ externalId: id }).where(eq(Inventory.id, existing.id));
@@ -100,7 +100,7 @@ export class ReferenceResolver {
 
     // Default missing logic
     if (!this.teamSettings.defaultProductId) {
-      const { id } = await this.adapter.createProduct({ name: "Default Product", price: 0, incomeAccountId: "DEFAULT_ACCOUNT" });
+      const { id } = await this.adapter.createProduct({ name: "Sales", price: 0, incomeAccountId: "" });
       this.teamSettings.defaultProductId = id;
       await db.update(teams).set({ settings: this.teamSettings }).where(eq(teams.id, this.organizationId));
       return id;

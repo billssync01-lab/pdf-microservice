@@ -28,10 +28,10 @@ export class QuickBooksAdapter implements AccountingAdapter {
     const isExpired = now > (expiryTime - bufferTime);
 
     if (isExpired) {
-      logger.info({ 
-        integrationId: integrationData.id, 
-        expiresAt: integrationData.expiresAt, 
-        bufferMinutes: 5 
+      logger.info({
+        integrationId: integrationData.id,
+        expiresAt: integrationData.expiresAt,
+        bufferMinutes: 5
       }, "Token is expired or expiring soon");
     }
 
@@ -61,7 +61,7 @@ export class QuickBooksAdapter implements AccountingAdapter {
 
         if (latestIntegration) {
           this.integration = latestIntegration; // Update memory with latest DB data
-          
+
           // Check if DB already has a valid token now
           if (!this.isTokenExpired(latestIntegration)) {
             logger.info({ integrationId: this.integration.id }, "Token was refreshed by another process, skipping");
@@ -88,7 +88,7 @@ export class QuickBooksAdapter implements AccountingAdapter {
 
     try {
       const auth = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
-      
+
       const res = await axios.post(
         tokenUrl,
         new URLSearchParams({
@@ -124,8 +124,8 @@ export class QuickBooksAdapter implements AccountingAdapter {
       logger.info({ integrationId: this.integration.id, expiresAt: this.integration.expiresAt }, "QuickBooks token refreshed successfully");
     } catch (error: any) {
       const errorData = error.response?.data || {};
-      logger.error({ 
-        integrationId: this.integration.id, 
+      logger.error({
+        integrationId: this.integration.id,
         error: errorData.error || error.message,
         errorDescription: errorData.error_description,
         statusCode: error.response?.status
@@ -162,16 +162,16 @@ export class QuickBooksAdapter implements AccountingAdapter {
       return res.data;
     } catch (error: any) {
       if (error.response?.status === 401) {
-        logger.warn({ 
-          integrationId: this.integration.id, 
-          endpoint, 
-          statusCode: 401 
+        logger.warn({
+          integrationId: this.integration.id,
+          endpoint,
+          statusCode: 401
         }, "Received 401 despite token validation, attempting force refresh");
 
         // Force expiration in memory to trigger a new refresh
         this.integration.expiresAt = new Date(Date.now() - 1000);
         await this.ensureValidToken();
-        
+
         // Retry once with new token
         const retryRes = await axios({
           url: `${this.apiBaseUrl}${endpoint}`,
@@ -185,7 +185,7 @@ export class QuickBooksAdapter implements AccountingAdapter {
         });
         return retryRes.data;
       }
-      
+
       const errorData = error.response?.data || {};
       throw new Error(`QB API Error: ${JSON.stringify(errorData)}`);
     }
@@ -201,18 +201,18 @@ export class QuickBooksAdapter implements AccountingAdapter {
     logger.info({ type, payload, realmid: this.integration.realmId }, "getting payload and type")
     const response = await this.fetchWithToken(`/v3/company/${this.integration.realmId}/${type}`, {
       method: "POST",
-      body: JSON.stringify(payload),
+      data: payload,
     });
     logger.info({ response }, "Quickbooks contact creation completed")
-    
+
     const entityName = type.charAt(0).toUpperCase() + type.slice(1);
     const entity = response[entityName];
-    
+
     if (!entity || !entity.Id) {
       logger.error({ response, entityName }, "QuickBooks contact creation response missing entity data");
       throw new Error(`QuickBooks contact creation failed: Response missing ${entityName} data`);
     }
-    
+
     return { id: entity.Id };
   }
 
@@ -226,29 +226,29 @@ export class QuickBooksAdapter implements AccountingAdapter {
     };
     const response = await this.fetchWithToken(`/v3/company/${this.integration.realmId}/item`, {
       method: "POST",
-      body: JSON.stringify(payload),
+      data: payload,
     });
-    
+
     if (!response.Item || !response.Item.Id) {
       logger.error({ response }, "QuickBooks product creation response missing Item data");
       throw new Error("QuickBooks product creation failed: Response missing Item data");
     }
-    
+
     return { id: response.Item.Id };
   }
 
   async createExpense(payload: any): Promise<CreateTransactionResponse> {
     const response = await this.fetchWithToken(`/v3/company/${this.integration.realmId}/purchase`, {
       method: "POST",
-      body: JSON.stringify(payload),
+      data: payload,
     });
-    
+
     if (!response.Purchase || !response.Purchase.Id) {
       logger.error({ response }, "QuickBooks expense creation response missing Purchase data");
       throw new Error("QuickBooks expense creation failed: Response missing Purchase data");
     }
-    
-    return { 
+
+    return {
       id: response.Purchase.Id,
       ...response.Purchase
     };
@@ -257,15 +257,15 @@ export class QuickBooksAdapter implements AccountingAdapter {
   async createInvoice(payload: any): Promise<CreateTransactionResponse> {
     const response = await this.fetchWithToken(`/v3/company/${this.integration.realmId}/invoice`, {
       method: "POST",
-      body: JSON.stringify(payload),
+      data: payload,
     });
-    
+
     if (!response.Invoice || !response.Invoice.Id) {
       logger.error({ response }, "QuickBooks invoice creation response missing Invoice data");
       throw new Error("QuickBooks invoice creation failed: Response missing Invoice data");
     }
-    
-    return { 
+
+    return {
       id: response.Invoice.Id,
       ...response.Invoice
     };
@@ -274,15 +274,15 @@ export class QuickBooksAdapter implements AccountingAdapter {
   async createSalesReceipt(payload: any): Promise<CreateTransactionResponse> {
     const response = await this.fetchWithToken(`/v3/company/${this.integration.realmId}/salesreceipt`, {
       method: "POST",
-      body: JSON.stringify(payload),
+      data: payload,
     });
-    
+
     if (!response.SalesReceipt || !response.SalesReceipt.Id) {
       logger.error({ response }, "QuickBooks sales receipt creation response missing SalesReceipt data");
       throw new Error("QuickBooks sales receipt creation failed: Response missing SalesReceipt data");
     }
-    
-    return { 
+
+    return {
       id: response.SalesReceipt.Id,
       ...response.SalesReceipt
     };
@@ -291,15 +291,15 @@ export class QuickBooksAdapter implements AccountingAdapter {
   async createPayment(payload: any): Promise<CreateTransactionResponse> {
     const response = await this.fetchWithToken(`/v3/company/${this.integration.realmId}/payment`, {
       method: "POST",
-      body: JSON.stringify(payload),
+      data: payload,
     });
-    
+
     if (!response.Payment || !response.Payment.Id) {
       logger.error({ response }, "QuickBooks payment creation response missing Payment data");
       throw new Error("QuickBooks payment creation failed: Response missing Payment data");
     }
-    
-    return { 
+
+    return {
       id: response.Payment.Id,
       ...response.Payment
     };
@@ -308,15 +308,15 @@ export class QuickBooksAdapter implements AccountingAdapter {
   async createJournalEntry(payload: any): Promise<CreateTransactionResponse> {
     const response = await this.fetchWithToken(`/v3/company/${this.integration.realmId}/journalentry`, {
       method: "POST",
-      body: JSON.stringify(payload),
+      data: payload,
     });
-    
+
     if (!response.JournalEntry || !response.JournalEntry.Id) {
       logger.error({ response }, "QuickBooks journal entry creation response missing JournalEntry data");
       throw new Error("QuickBooks journal entry creation failed: Response missing JournalEntry data");
     }
-    
-    return { 
+
+    return {
       id: response.JournalEntry.Id,
       ...response.JournalEntry
     };
@@ -330,7 +330,7 @@ export class QuickBooksAdapter implements AccountingAdapter {
     };
     const response = await this.fetchWithToken(`/v3/company/${this.integration.realmId}/account`, {
       method: "POST",
-      body: JSON.stringify(payload),
+      data: payload,
     });
     return { id: response.Account.Id };
   }
