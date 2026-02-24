@@ -38,6 +38,7 @@ export class PayloadBuilder {
 
   private static buildQuickBooksPurchase(transaction: any, lineItems: any[], references: any) {
     return {
+      PaymentType: "Cash",
       Line: this.getQBLineItems(lineItems, references, "AccountBasedExpenseLineDetail"),
       VendorRef: { value: references.contactId },
       AccountRef: { value: references.bankAccountId },
@@ -90,16 +91,27 @@ export class PayloadBuilder {
   }
 
   private static getQBLineItems(lineItems: any[], references: any, detailType: string) {
-    return lineItems.map((item) => ({
-      Description: item.productName,
-      Amount: item.totalAmount / 100,
-      DetailType: detailType,
-      [detailType]: {
-        AccountRef: { value: item.lineAccountId || references.accountId },
-        Qty: item.quantity,
-        UnitPrice: item.price / 100,
-      },
-    }));
+    return lineItems.map((item) => {
+      const line: any = {
+        Description: item.productName,
+        Amount: item.totalAmount / 100,
+        DetailType: detailType,
+      };
+
+      if (detailType === "AccountBasedExpenseLineDetail") {
+        line[detailType] = {
+          AccountRef: { value: item.lineAccountId || references.accountId },
+        };
+      } else if (detailType === "SalesItemLineDetail" || detailType === "ItemBasedExpenseLineDetail") {
+        line[detailType] = {
+          ItemRef: { value: item.lineAccountId || references.accountId },
+          Qty: item.quantity,
+          UnitPrice: item.price / 100,
+        };
+      }
+
+      return line;
+    });
   }
 
   private static buildXeroInvoice(transaction: any, lineItems: any[], references: any, type: string) {
