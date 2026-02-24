@@ -325,8 +325,7 @@ export class QuickBooksAdapter implements AccountingAdapter {
   async createAccount(data: any): Promise<{ id: string }> {
     const payload = {
       Name: data.name,
-      AccountType: data.type || "Expense",
-      AccountSubType: data.subType,
+      AccountType: "Expense",
     };
     const response = await this.fetchWithToken(`/v3/company/${this.integration.realmId}/account`, {
       method: "POST",

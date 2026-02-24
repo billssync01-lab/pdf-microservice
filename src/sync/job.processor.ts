@@ -241,10 +241,10 @@ export class JobProcessor {
         throw new Error(`Contact resolution failed: ${error.message}`);
       }
 
-      logger.info({ itemId, accountName: "General Expense", platform }, "Resolving account reference");
+      logger.info({ itemId, accountName: "Uncategorized Expense", platform }, "Resolving account reference");
       let accountId: string;
       try {
-        accountId = await resolver.resolveAccount("General Expense");
+        accountId = await resolver.resolveAccount("Uncategorized Expense");
         logger.info({ itemId, accountId }, "Account resolved successfully");
       } catch (error: any) {
         logger.error({ itemId, error: error.message }, "Failed to resolve account");
