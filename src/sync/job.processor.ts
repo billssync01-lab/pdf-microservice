@@ -50,10 +50,10 @@ export class JobProcessor {
 
       logger.info({ jobId, platform: (job.payload as any).platform }, "Job fetched successfully");
 
-      await db.update(SyncJobs).set({ 
-        status: "processing", 
+      await db.update(SyncJobs).set({
+        status: "processing",
         startedAt: new Date(),
-        lockedAt: new Date() 
+        lockedAt: new Date()
       }).where(eq(SyncJobs.id, jobId));
 
       logger.info({ jobId }, "Job status updated to processing");
@@ -82,10 +82,10 @@ export class JobProcessor {
 
       if (!integration) {
         logger.error({ jobId, platform: (job.payload as any).platform, organizationId: job.organizationId }, "Integration not found");
-        await db.update(SyncJobs).set({ 
-          status: "failed", 
-          error: "Integration not found", 
-          completedAt: new Date() 
+        await db.update(SyncJobs).set({
+          status: "failed",
+          error: "Integration not found",
+          completedAt: new Date()
         }).where(eq(SyncJobs.id, jobId));
         throw new Error("Integration not found");
       }
@@ -118,25 +118,25 @@ export class JobProcessor {
 
           logger.info({ jobId, itemId: item.id, successCount: completed, progress: Math.round((completed / items.length) * 100) }, "Job item completed successfully");
         } catch (error: any) {
-          const isAuthError = error.message?.includes("Token Expired") || 
-                             error.message?.includes("Revoked") || 
-                             error.message?.includes("Re-authentication");
+          const isAuthError = error.message?.includes("Token Expired") ||
+            error.message?.includes("Revoked") ||
+            error.message?.includes("Re-authentication");
 
           if (isAuthError) {
-            logger.error({ 
-              jobId, 
-              itemId: item.id, 
+            logger.error({
+              jobId,
+              itemId: item.id,
               error: error.message,
               authError: true
             }, "Authentication/Authorization error - stopping job processing");
             authError = true;
 
-            await db.update(SyncJobItems).set({ 
-              status: "failed", 
-              error: error.message 
+            await db.update(SyncJobItems).set({
+              status: "failed",
+              error: error.message
             }).where(eq(SyncJobItems.id, item.id));
 
-            await db.update(SyncJobs).set({ 
+            await db.update(SyncJobs).set({
               status: "failed",
               error: "Integration authentication failed. Please re-authenticate the integration.",
               completedAt: new Date(),
@@ -147,20 +147,20 @@ export class JobProcessor {
           }
 
           failed++;
-          logger.error({ 
-            jobId, 
-            itemId: item.id, 
+          logger.error({
+            jobId,
+            itemId: item.id,
             error: error.message,
-            stack: error.stack 
+            stack: error.stack
           }, "Job item processing failed");
 
-          await db.update(SyncJobItems).set({ 
-            status: "failed", 
-            error: error.message 
+          await db.update(SyncJobItems).set({
+            status: "failed",
+            error: error.message
           }).where(eq(SyncJobItems.id, item.id));
 
-          await db.update(SyncJobs).set({ 
-            errorCount: failed 
+          await db.update(SyncJobs).set({
+            errorCount: failed
           }).where(eq(SyncJobs.id, jobId));
         }
       }
@@ -171,28 +171,28 @@ export class JobProcessor {
       }
 
       const finalStatus = failed === 0 ? "completed" : failed === items.length ? "failed" : "partial";
-      await db.update(SyncJobs).set({ 
-        status: finalStatus, 
+      await db.update(SyncJobs).set({
+        status: finalStatus,
         completedAt: new Date(),
         progress: 100
       }).where(eq(SyncJobs.id, jobId));
 
-      logger.info({ 
-        jobId, 
-        status: finalStatus, 
-        successCount: completed, 
-        errorCount: failed, 
-        totalItems: items.length 
+      logger.info({
+        jobId,
+        status: finalStatus,
+        successCount: completed,
+        errorCount: failed,
+        totalItems: items.length
       }, "Job processing completed");
     } catch (error: any) {
-      logger.error({ 
-        jobId, 
+      logger.error({
+        jobId,
         error: error.message,
-        stack: error.stack 
+        stack: error.stack
       }, "Job processing failed with exception");
 
-      await db.update(SyncJobs).set({ 
-        status: "failed", 
+      await db.update(SyncJobs).set({
+        status: "failed",
         error: error.message,
         completedAt: new Date()
       }).where(eq(SyncJobs.id, jobId)).catch(err => {
@@ -202,9 +202,9 @@ export class JobProcessor {
   }
 
   private async processItem(
-    item: any, 
-    adapter: AccountingAdapter, 
-    resolver: ReferenceResolver, 
+    item: any,
+    adapter: AccountingAdapter,
+    resolver: ReferenceResolver,
     platform: string,
     jobId: string
   ) {
@@ -242,20 +242,49 @@ export class JobProcessor {
       }
 
       logger.info({ itemId, accountName: "Uncategorized Expense", platform }, "Resolving account reference");
-      let accountId: string;
+      let account: { id: string; code?: string };
       try {
-        accountId = await resolver.resolveAccount("Uncategorized Expense");
-        logger.info({ itemId, accountId }, "Account resolved successfully");
+        account = await resolver.resolveAccount("Uncategorized Expense");
+        logger.info({ itemId, accountId: account.id, accountCode: account.code }, "Account resolved successfully");
       } catch (error: any) {
         logger.error({ itemId, error: error.message }, "Failed to resolve account");
         throw new Error(`Account resolution failed: ${error.message}`);
       }
 
-      const references = { contactId, accountId };
-      logger.info({ itemId, contactId, accountId }, "Building payload for accounting platform");
+      logger.info({ itemId, platform }, "Resolving bank account reference");
+      let bankAccount: { id: string; code?: string };
+      try {
+        bankAccount = await resolver.resolveBankAccount();
+        logger.info({ itemId, bankAccountId: bankAccount.id, bankAccountCode: bankAccount.code }, "Bank account resolved successfully");
+      } catch (error: any) {
+        logger.error({ itemId, error: error.message }, "Failed to resolve bank account");
+        throw new Error(`Bank account resolution failed: ${error.message}`);
+      }
+
+      // Resolve each line item product
+      for (const lineItem of lineItems) {
+        try {
+          const product = await resolver.resolveProduct(lineItem.productName, Number(lineItem.price));
+          lineItem.lineAccountId = product.id;
+          lineItem.lineAccountCode = product.code ?? null;
+          logger.info({ itemId, productName: lineItem.productName, productId: product.id, productCode: product.code }, "Product resolved for line item");
+        } catch (error: any) {
+          logger.warn({ itemId, productName: lineItem.productName, error: error.message }, "Failed to resolve product for line item");
+        }
+      }
+
+      const references = {
+        contactId,
+        accountId: account.id,
+        accountCode: account.code,
+        bankAccountId: bankAccount.id,
+        bankAccountCode: bankAccount.code,
+      };
+      logger.info({ itemId, contactId, accountId: account.id, bankAccountId: bankAccount.id }, "Building payload for accounting platform");
       let payload: any;
       try {
         payload = PayloadBuilder.build(platform, transaction, lineItems, references, this.teamSettings);
+        await db.update(SyncJobItems).set({ payload: payload, status: "syncing" }).where(eq(SyncJobItems.id, jobId));
         logger.info({ itemId, payloadKeys: Object.keys(payload) }, "Payload built successfully");
       } catch (error: any) {
         logger.error({ itemId, error: error.message }, "Failed to build payload");
@@ -283,16 +312,15 @@ export class JobProcessor {
 
       logger.info({ itemId, externalId: result.id }, "Updating sync job item with result");
       await db.update(SyncJobItems).set({
-        status: "completed",
+        status: "synced",
         externalId: result.id,
         result: result as any,
         payload: payload as any
       }).where(eq(SyncJobItems.id, itemId));
-
       logger.info({ itemId, transactionId: transaction.id, externalId: result.id }, "Updating transaction with external ID and accounting data");
-      
+
       const accountingUrl = result.url || result.accountingUrl || "";
-      
+
       await db.update(transactions).set({
         externalId: result.id,
         accountingId: result.id,
@@ -302,9 +330,9 @@ export class JobProcessor {
 
       if (lineItems.length > 0 && result.lineItems) {
         logger.info({ itemId, lineItemCount: lineItems.length }, "Updating transaction line items with external account IDs");
-        
+
         for (const lineItem of lineItems) {
-          const matchedLineItem = result.lineItems.find((li: any) => 
+          const matchedLineItem = result.lineItems.find((li: any) =>
             li.description === lineItem.productName || li.itemRef === lineItem.id
           );
 
@@ -323,10 +351,10 @@ export class JobProcessor {
 
       logger.info({ itemId, externalId: result.id, platform }, "Job item processing completed successfully");
     } catch (error: any) {
-      logger.error({ 
-        itemId, 
+      logger.error({
+        itemId,
         error: error.message,
-        stack: error.stack 
+        stack: error.stack
       }, "Error processing job item");
       throw error;
     }

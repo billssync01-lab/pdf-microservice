@@ -245,6 +245,7 @@ export const transactionLineItems = pgTable("transaction_line_items", {
   totalAmount: numeric("total_amount").notNull(),
   lineTotal: numeric("line_total").notNull(),
   lineAccountId: text("line_account_id"),
+  lineAccountCode: text("line_account_code"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

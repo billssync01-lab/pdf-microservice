@@ -40,7 +40,7 @@ export class PayloadBuilder {
     return {
       Line: this.getQBLineItems(lineItems, references, "AccountBasedExpenseLineDetail"),
       VendorRef: { value: references.contactId },
-      AccountRef: { value: references.bankAccountId || "35" },
+      AccountRef: { value: references.bankAccountId },
       TxnDate: transaction.date.toISOString().split("T")[0],
       PrivateNote: transaction.notes,
     };
@@ -59,7 +59,7 @@ export class PayloadBuilder {
     return {
       Line: this.getQBLineItems(lineItems, references, "SalesItemLineDetail"),
       CustomerRef: { value: references.contactId },
-      DepositToAccountRef: { value: references.bankAccountId || "35" },
+      DepositToAccountRef: { value: references.bankAccountId },
       TxnDate: transaction.date.toISOString().split("T")[0],
     };
   }
@@ -83,7 +83,7 @@ export class PayloadBuilder {
       DetailType: "JournalEntryLineDetail",
       JournalEntryLineDetail: {
         PostingType: "Credit",
-        AccountRef: { value: references.bankAccountId || "35" },
+        AccountRef: { value: references.bankAccountId },
       },
     });
     return { Line: lines };
@@ -111,7 +111,7 @@ export class PayloadBuilder {
         Description: item.productName,
         Quantity: item.quantity,
         UnitAmount: item.price / 100,
-        AccountCode: item.lineAccountId || references.accountCode || "400",
+        AccountCode: item.lineAccountCode || references.accountCode,
       })),
       Status: "AUTHORISED",
     };
@@ -125,12 +125,12 @@ export class PayloadBuilder {
         {
           Description: transaction.payee,
           LineAmount: transaction.amount / 100,
-          AccountCode: references.accountId,
+          AccountCode: references.accountCode,
         },
         {
           Description: transaction.payee,
           LineAmount: -(transaction.amount / 100),
-          AccountCode: references.bankAccountId || "090",
+          AccountCode: references.bankAccountCode,
         },
       ],
     };

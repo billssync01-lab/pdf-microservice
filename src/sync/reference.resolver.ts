@@ -50,16 +50,19 @@ export class ReferenceResolver {
 
   /* -------------------------------- ACCOUNT -------------------------------- */
 
-  async resolveAccount(name: string, type?: string): Promise<string> {
+  async resolveAccount(name: string, type?: string): Promise<{ id: string; code?: string }> {
     const existing = await this.adapter.query("Account", `Name = '${this.escape(name)}'`);
 
     if (existing?.length) {
-      return existing[0].Id;
+      return {
+        id: existing[0].Id || existing[0].AccountID || existing[0].account_id,
+        code: existing[0].Code || existing[0].AccountCode,
+      };
     }
 
     if (this.teamSettings.autoCreateList === true) {
       const { id } = await this.adapter.createAccount({ name, type });
-      return id;
+      return { id };
     }
 
     if (!this.teamSettings.defaultAccountId) {
@@ -74,40 +77,43 @@ export class ReferenceResolver {
         .set({ settings: this.teamSettings })
         .where(eq(teams.id, this.organizationId));
 
-      return id;
+      return { id };
     }
 
-    return this.teamSettings.defaultAccountId;
+    return { id: this.teamSettings.defaultAccountId };
   }
 
   /* -------------------------------- PRODUCT -------------------------------- */
 
-  async resolveProduct(name: string, price: number): Promise<string> {
+  async resolveProduct(name: string, price: number): Promise<{ id: string; code?: string }> {
     const existing = await this.adapter.query("Item", `Name = '${this.escape(name)}'`);
 
     if (existing?.length) {
-      return existing[0].Id;
+      return {
+        id: existing[0].Id || existing[0].ItemID || existing[0].item_id,
+        code: existing[0].Code || existing[0].ItemCode,
+      };
     }
 
     if (this.teamSettings.autoCreateList === true) {
-      const incomeAccountId = await this.resolveAccount("Services", "Income");
+      const incomeAccount = await this.resolveAccount("Services", "Income");
 
       const { id } = await this.adapter.createProduct({
         name,
         price,
-        incomeAccountId,
+        incomeAccountId: incomeAccount.id,
       });
 
-      return id;
+      return { id };
     }
 
     if (!this.teamSettings.defaultProductId) {
-      const incomeAccountId = await this.resolveAccount("Services", "Income");
+      const incomeAccount = await this.resolveAccount("Services", "Income");
 
       const { id } = await this.adapter.createProduct({
         name: "Sales",
         price: 0,
-        incomeAccountId,
+        incomeAccountId: incomeAccount.id,
       });
 
       this.teamSettings.defaultProductId = id;
@@ -116,10 +122,38 @@ export class ReferenceResolver {
         .set({ settings: this.teamSettings })
         .where(eq(teams.id, this.organizationId));
 
-      return id;
+      return { id };
     }
 
-    return this.teamSettings.defaultProductId;
+    return { id: this.teamSettings.defaultProductId };
+  }
+
+  /* ------------------------------ BANK ACCOUNT ------------------------------ */
+
+  async resolveBankAccount(): Promise<{ id: string; code?: string }> {
+    const name = this.teamSettings.defaultBankAccount || "Main Bank Account";
+    const existing = await this.adapter.query("Account", `Name = '${this.escape(name)}'`);
+
+    if (existing?.length) {
+      return {
+        id: existing[0].Id || existing[0].AccountID || existing[0].account_id,
+        code: existing[0].Code || existing[0].AccountCode,
+      };
+    }
+
+    const { id } = await this.adapter.createAccount({
+      name,
+      type: "Bank",
+    });
+
+    this.teamSettings.defaultBankAccount = name;
+    this.teamSettings.bankAccountId = id;
+
+    await db.update(teams)
+      .set({ settings: this.teamSettings })
+      .where(eq(teams.id, this.organizationId));
+
+    return { id };
   }
 
   /* ----------------------------- Helper: Escape ----------------------------- */
