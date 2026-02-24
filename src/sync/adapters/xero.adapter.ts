@@ -1,7 +1,7 @@
 import { db } from "../../db";
 import { Integrations } from "../../schema";
 import { eq } from "drizzle-orm";
-import { AccountingAdapter } from "./accounting.adapter";
+import { AccountingAdapter, CreateTransactionResponse } from "./accounting.adapter";
 
 export class XeroAdapter implements AccountingAdapter {
   private integration: any;
@@ -73,6 +73,11 @@ export class XeroAdapter implements AccountingAdapter {
       method: "POST",
       body: JSON.stringify(payload),
     });
+    
+    if (!response.Contacts || response.Contacts.length === 0 || !response.Contacts[0].ContactID) {
+      throw new Error("Xero contact creation failed: Response missing ContactID");
+    }
+    
     return { id: response.Contacts[0].ContactID };
   }
 
@@ -84,39 +89,76 @@ export class XeroAdapter implements AccountingAdapter {
       method: "POST",
       body: JSON.stringify(payload),
     });
+    
+    if (!response.Items || response.Items.length === 0 || !response.Items[0].ItemID) {
+      throw new Error("Xero product creation failed: Response missing ItemID");
+    }
+    
     return { id: response.Items[0].ItemID };
   }
 
-  async createExpense(payload: any): Promise<{ id: string }> {
+  async createExpense(payload: any): Promise<CreateTransactionResponse> {
     const response = await this.fetchWithToken("/Invoices", {
       method: "POST",
       body: JSON.stringify(payload),
     });
-    return { id: response.Invoices[0].InvoiceID };
+    
+    if (!response.Invoices || response.Invoices.length === 0 || !response.Invoices[0].InvoiceID) {
+      throw new Error("Xero expense creation failed: Response missing InvoiceID");
+    }
+    
+    return { 
+      id: response.Invoices[0].InvoiceID,
+      ...response.Invoices[0]
+    };
   }
 
-  async createInvoice(payload: any): Promise<{ id: string }> {
+  async createInvoice(payload: any): Promise<CreateTransactionResponse> {
     const response = await this.fetchWithToken("/Invoices", {
       method: "POST",
       body: JSON.stringify(payload),
     });
-    return { id: response.Invoices[0].InvoiceID };
+    
+    if (!response.Invoices || response.Invoices.length === 0 || !response.Invoices[0].InvoiceID) {
+      throw new Error("Xero invoice creation failed: Response missing InvoiceID");
+    }
+    
+    return { 
+      id: response.Invoices[0].InvoiceID,
+      ...response.Invoices[0]
+    };
   }
 
-  async createPayment(payload: any): Promise<{ id: string }> {
+  async createPayment(payload: any): Promise<CreateTransactionResponse> {
     const response = await this.fetchWithToken("/Payments", {
       method: "POST",
       body: JSON.stringify(payload),
     });
-    return { id: response.Payments[0].PaymentID };
+    
+    if (!response.Payments || response.Payments.length === 0 || !response.Payments[0].PaymentID) {
+      throw new Error("Xero payment creation failed: Response missing PaymentID");
+    }
+    
+    return { 
+      id: response.Payments[0].PaymentID,
+      ...response.Payments[0]
+    };
   }
 
-  async createJournalEntry(payload: any): Promise<{ id: string }> {
+  async createJournalEntry(payload: any): Promise<CreateTransactionResponse> {
     const response = await this.fetchWithToken("/ManualJournals", {
       method: "POST",
       body: JSON.stringify(payload),
     });
-    return { id: response.ManualJournals[0].ManualJournalID };
+    
+    if (!response.ManualJournals || response.ManualJournals.length === 0 || !response.ManualJournals[0].ManualJournalID) {
+      throw new Error("Xero manual journal creation failed: Response missing ManualJournalID");
+    }
+    
+    return { 
+      id: response.ManualJournals[0].ManualJournalID,
+      ...response.ManualJournals[0]
+    };
   }
 
   async createAccount(data: any): Promise<{ id: string }> {

@@ -1,7 +1,7 @@
 import { db } from "../../db";
 import { Integrations } from "../../schema";
 import { eq } from "drizzle-orm";
-import { AccountingAdapter } from "./accounting.adapter";
+import { AccountingAdapter, CreateTransactionResponse } from "./accounting.adapter";
 
 export class ZohoAdapter implements AccountingAdapter {
   private integration: any;
@@ -72,6 +72,11 @@ export class ZohoAdapter implements AccountingAdapter {
       method: "POST",
       body: JSON.stringify(payload),
     });
+    
+    if (!response.contact || !response.contact.contact_id) {
+      throw new Error("Zoho contact creation failed: Response missing contact_id");
+    }
+    
     return { id: response.contact.contact_id };
   }
 
@@ -85,44 +90,81 @@ export class ZohoAdapter implements AccountingAdapter {
       method: "POST",
       body: JSON.stringify(payload),
     });
+    
+    if (!response.item || !response.item.item_id) {
+      throw new Error("Zoho product creation failed: Response missing item_id");
+    }
+    
     return { id: response.item.item_id };
   }
 
-  async createExpense(payload: any): Promise<{ id: string }> {
+  async createExpense(payload: any): Promise<CreateTransactionResponse> {
     const response = await this.fetchWithToken("/expenses", {
       method: "POST",
       body: JSON.stringify(payload),
     });
-    return { id: response.expense.expense_id };
+    
+    if (!response.expense || !response.expense.expense_id) {
+      throw new Error("Zoho expense creation failed: Response missing expense_id");
+    }
+    
+    return { 
+      id: response.expense.expense_id,
+      ...response.expense
+    };
   }
 
-  async createInvoice(payload: any): Promise<{ id: string }> {
+  async createInvoice(payload: any): Promise<CreateTransactionResponse> {
     const response = await this.fetchWithToken("/invoices", {
       method: "POST",
       body: JSON.stringify(payload),
     });
-    return { id: response.invoice.invoice_id };
+    
+    if (!response.invoice || !response.invoice.invoice_id) {
+      throw new Error("Zoho invoice creation failed: Response missing invoice_id");
+    }
+    
+    return { 
+      id: response.invoice.invoice_id,
+      ...response.invoice
+    };
   }
 
-  async createSalesReceipt(payload: any): Promise<{ id: string }> {
+  async createSalesReceipt(payload: any): Promise<CreateTransactionResponse> {
     // Zoho uses invoices with payments or specific sales receipts
     return this.createInvoice(payload);
   }
 
-  async createPayment(payload: any): Promise<{ id: string }> {
+  async createPayment(payload: any): Promise<CreateTransactionResponse> {
     const response = await this.fetchWithToken("/customerpayments", {
       method: "POST",
       body: JSON.stringify(payload),
     });
-    return { id: response.payment.payment_id };
+    
+    if (!response.payment || !response.payment.payment_id) {
+      throw new Error("Zoho payment creation failed: Response missing payment_id");
+    }
+    
+    return { 
+      id: response.payment.payment_id,
+      ...response.payment
+    };
   }
 
-  async createJournalEntry(payload: any): Promise<{ id: string }> {
+  async createJournalEntry(payload: any): Promise<CreateTransactionResponse> {
     const response = await this.fetchWithToken("/journals", {
       method: "POST",
       body: JSON.stringify(payload),
     });
-    return { id: response.journal.journal_id };
+    
+    if (!response.journal || !response.journal.journal_id) {
+      throw new Error("Zoho journal creation failed: Response missing journal_id");
+    }
+    
+    return { 
+      id: response.journal.journal_id,
+      ...response.journal
+    };
   }
 
   async createAccount(data: any): Promise<{ id: string }> {
