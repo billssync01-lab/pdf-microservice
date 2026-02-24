@@ -53,7 +53,10 @@ export class ReferenceResolver {
 
   async resolveAccount(name: string, type?: string): Promise<string> {
     const existing = await db.query.accounts.findFirst({
-      where: eq(accounts.name, name), // Simplified search
+      where: and(
+        eq(accounts.organizationId, this.organizationId),
+        eq(accounts.name, name)
+      ),
     });
 
     if (existing?.externalId) return existing.externalId;

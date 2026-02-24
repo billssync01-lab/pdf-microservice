@@ -137,6 +137,8 @@ export const Integrations = pgTable('integrations', {
   refreshToken: text('refresh_token'),
   tokenType: varchar('token_type'),
   scope: text('scope'),
+  status: varchar('status', { length: 20 }), // 1 | 0 | 2 (active | inactive | error)
+  priority: integer('priority').default(0), // 0 - no priority, 1 - primary
   expiresAt: timestamp('expires_at', { withTimezone: true }),
   tenantId: text('tenant_id'),          // Xero
   realmId: text('realm_id'),             // QuickBooks
@@ -146,6 +148,7 @@ export const Integrations = pgTable('integrations', {
   metadata: jsonb('metadata').default({}),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
 });
 
 export const categories = pgTable('budgets', {
@@ -163,6 +166,7 @@ export const categories = pgTable('budgets', {
 
 export const accounts = pgTable("accounts", {
   id: text("id").primaryKey(),
+  organizationId: integer("organization_id").references(() => teams.id),
   plaidId: text("plaid_id"),
   name: text("name").notNull(),
   externalId: text('external_id'),

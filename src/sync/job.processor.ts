@@ -1,6 +1,6 @@
 import { db } from "../db";
 import { SyncJobs, SyncJobItems, transactions, transactionLineItems, teams, Integrations } from "../schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, isNull } from "drizzle-orm";
 import { QuickBooksAdapter } from "./adapters/quickbooks.adapter";
 import { XeroAdapter } from "./adapters/xero.adapter";
 import { ZohoAdapter } from "./adapters/zoho.adapter";
@@ -73,7 +73,10 @@ export class JobProcessor {
       const integration = await db.query.Integrations.findFirst({
         where: and(
           eq(Integrations.organizationId, job.organizationId),
-          eq(Integrations.provider, (job.payload as any).platform)
+          eq(Integrations.provider, (job.payload as any).platform),
+          eq(Integrations.priority, 1),
+          eq(Integrations.status, "1"),
+          isNull(Integrations.deletedAt)
         ),
       });
 

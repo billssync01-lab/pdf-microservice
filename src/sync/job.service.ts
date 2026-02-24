@@ -89,6 +89,7 @@ export class JobService {
 
       const unsynced = await db.query.transactions.findMany({
         where: and(
+          eq(transactions.organizationId, organizationId),
           eq(transactions.status, "ready"),
           isNull(transactions.externalId)
         ),

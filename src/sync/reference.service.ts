@@ -1,6 +1,6 @@
 import { db } from "../db";
 import { accounts, contacts, Inventory, teams, Integrations } from "../schema";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, isNull } from "drizzle-orm";
 import { AccountingAdapter } from "./adapters/accounting.adapter";
 import { QuickBooksAdapter } from "./adapters/quickbooks.adapter";
 import { XeroAdapter } from "./adapters/xero.adapter";
@@ -9,7 +9,13 @@ import { ZohoAdapter } from "./adapters/zoho.adapter";
 export class ReferenceDataService {
   async syncAllReferences(organizationId: number, provider: string) {
     const integration = await db.query.Integrations.findFirst({
-      where: and(eq(Integrations.organizationId, organizationId), eq(Integrations.provider, provider)),
+      where: and(
+        eq(Integrations.organizationId, organizationId), 
+        eq(Integrations.provider, provider),
+        eq(Integrations.priority, 1),
+        eq(Integrations.status, "1"),
+        isNull(Integrations.deletedAt)
+      ),
     });
     if (!integration) return;
 
