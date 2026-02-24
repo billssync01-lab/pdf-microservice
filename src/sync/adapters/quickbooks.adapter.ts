@@ -3,6 +3,7 @@ import { Integrations } from "../../schema";
 import { eq } from "drizzle-orm";
 import { AccountingAdapter } from "./accounting.adapter";
 import logger from "../../utils/logger";
+import axios from "axios";
 
 export class QuickBooksAdapter implements AccountingAdapter {
   private integration: any;
@@ -14,22 +15,22 @@ export class QuickBooksAdapter implements AccountingAdapter {
     this.apiBaseUrl = process.env.QUICKBOOKS_API_URL || "https://sandbox-quickbooks.api.intuit.com";
   }
 
-  private isTokenExpired(): boolean {
-    if (!this.integration.expiresAt) {
-      logger.warn({ integrationId: this.integration.id }, "Token expiry date not set");
+  private isTokenExpired(integrationData: any = this.integration): boolean {
+    if (!integrationData.expiresAt) {
+      logger.warn({ integrationId: integrationData.id }, "Token expiry date not set");
       return true;
     }
 
-    const expiryTime = new Date(this.integration.expiresAt).getTime();
+    const expiryTime = new Date(integrationData.expiresAt).getTime();
     const now = Date.now();
-    const bufferTime = 5 * 60 * 1000;
+    const bufferTime = 5 * 60 * 1000; // 5 minute buffer
 
     const isExpired = now > (expiryTime - bufferTime);
 
     if (isExpired) {
       logger.info({ 
-        integrationId: this.integration.id, 
-        expiresAt: this.integration.expiresAt, 
+        integrationId: integrationData.id, 
+        expiresAt: integrationData.expiresAt, 
         bufferMinutes: 5 
       }, "Token is expired or expiring soon");
     }
@@ -38,20 +39,42 @@ export class QuickBooksAdapter implements AccountingAdapter {
   }
 
   private async ensureValidToken(): Promise<void> {
+    // 1. Initial memory check
     if (!this.isTokenExpired()) {
-      logger.debug({ integrationId: this.integration.id }, "Token is still valid, no refresh needed");
       return;
     }
 
-    if (!this.refreshPromise) {
-      logger.info({ integrationId: this.integration.id }, "Starting token refresh");
-      this.refreshPromise = this.refreshToken()
-        .finally(() => {
-          this.refreshPromise = null;
-        });
-    } else {
-      logger.info({ integrationId: this.integration.id }, "Token refresh already in progress, waiting for existing refresh");
+    // 2. Lock to prevent concurrent refresh in SAME process
+    if (this.refreshPromise) {
+      logger.info({ integrationId: this.integration.id }, "Waiting for existing token refresh in progress");
+      await this.refreshPromise;
+      return;
     }
+
+    // 3. Create refresh promise
+    this.refreshPromise = (async () => {
+      try {
+        // 4. Fetch latest from DB to check if ANOTHER process refreshed it
+        const latestIntegration = await db.query.Integrations.findFirst({
+          where: eq(Integrations.id, this.integration.id),
+        });
+
+        if (latestIntegration) {
+          this.integration = latestIntegration; // Update memory with latest DB data
+          
+          // Check if DB already has a valid token now
+          if (!this.isTokenExpired(latestIntegration)) {
+            logger.info({ integrationId: this.integration.id }, "Token was refreshed by another process, skipping");
+            return;
+          }
+        }
+
+        // 5. Perform the actual refresh if still expired
+        await this.refreshToken();
+      } finally {
+        this.refreshPromise = null;
+      }
+    })();
 
     await this.refreshPromise;
   }
@@ -64,90 +87,108 @@ export class QuickBooksAdapter implements AccountingAdapter {
     logger.info({ integrationId: this.integration.id, provider: "quickbooks" }, "Attempting to refresh QuickBooks token");
 
     try {
-      const res = await fetch(tokenUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          Authorization: "Basic " + Buffer.from(`${clientId}:${clientSecret}`).toString("base64"),
-        },
-        body: new URLSearchParams({
+      const auth = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
+      
+      const res = await axios.post(
+        tokenUrl,
+        new URLSearchParams({
           grant_type: "refresh_token",
           refresh_token: this.integration.refreshToken,
         }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        logger.error({ 
-          integrationId: this.integration.id, 
-          error: data.error,
-          errorDescription: data.error_description,
-          statusCode: res.status
-        }, "QuickBooks token refresh failed");
-
-        if (data.error === "invalid_grant") {
-          await db.update(Integrations).set({
-            metadata: { ...this.integration.metadata, authStatus: "expired", lastAuthError: data.error_description },
-            updatedAt: new Date(),
-          }).where(eq(Integrations.id, this.integration.id));
-
-          throw new Error(`QB Token Expired or Revoked: ${data.error_description || data.error}. Re-authentication required.`);
+        {
+          headers: {
+            Authorization: `Basic ${auth}`,
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
         }
+      );
 
-        throw new Error(`QB Refresh Failed: ${data.error} - ${data.error_description}`);
-      }
+      const data = res.data;
 
       this.integration.accessToken = data.access_token;
       this.integration.refreshToken = data.refresh_token || this.integration.refreshToken;
       this.integration.expiresAt = new Date(Date.now() + data.expires_in * 1000);
+      this.integration.tokenType = data.token_type || this.integration.tokenType;
+      this.integration.scope = data.scope || this.integration.scope;
 
       await db.update(Integrations).set({
         accessToken: this.integration.accessToken,
         refreshToken: this.integration.refreshToken,
         expiresAt: this.integration.expiresAt,
+        tokenType: this.integration.tokenType,
+        scope: this.integration.scope,
         metadata: { ...this.integration.metadata, authStatus: "active" },
         updatedAt: new Date(),
       }).where(eq(Integrations.id, this.integration.id));
 
       logger.info({ integrationId: this.integration.id, expiresAt: this.integration.expiresAt }, "QuickBooks token refreshed successfully");
     } catch (error: any) {
+      const errorData = error.response?.data || {};
       logger.error({ 
         integrationId: this.integration.id, 
-        error: error.message,
-        stack: error.stack 
-      }, "Exception during QuickBooks token refresh");
-      throw error;
+        error: errorData.error || error.message,
+        errorDescription: errorData.error_description,
+        statusCode: error.response?.status
+      }, "QuickBooks token refresh failed");
+
+      if (errorData.error === "invalid_grant") {
+        await db.update(Integrations).set({
+          metadata: { ...this.integration.metadata, authStatus: "expired", lastAuthError: errorData.error_description },
+          updatedAt: new Date(),
+        }).where(eq(Integrations.id, this.integration.id));
+
+        throw new Error(`QB Token Expired or Revoked: ${errorData.error_description || errorData.error}. Re-authentication required.`);
+      }
+
+      throw new Error(`QB Refresh Failed: ${errorData.error || error.message}`);
     }
   }
 
   private async fetchWithToken(endpoint: string, options: any = {}): Promise<any> {
     await this.ensureValidToken();
 
-    const res = await fetch(`${this.apiBaseUrl}${endpoint}`, {
-      ...options,
-      headers: {
-        ...options.headers,
-        Authorization: `Bearer ${this.integration.accessToken}`,
-        Accept: "application/json",
-        "Content-Type": "application/json",
-      },
-    });
+    try {
+      const res = await axios({
+        url: `${this.apiBaseUrl}${endpoint}`,
+        ...options,
+        headers: {
+          ...options.headers,
+          Authorization: `Bearer ${this.integration.accessToken}`,
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+      });
 
-    if (res.status === 401) {
-      logger.warn({ 
-        integrationId: this.integration.id, 
-        endpoint, 
-        statusCode: 401 
-      }, "Received 401 despite token validation, attempting refresh");
+      return res.data;
+    } catch (error: any) {
+      if (error.response?.status === 401) {
+        logger.warn({ 
+          integrationId: this.integration.id, 
+          endpoint, 
+          statusCode: 401 
+        }, "Received 401 despite token validation, attempting force refresh");
 
-      await this.ensureValidToken();
-      return this.fetchWithToken(endpoint, options);
+        // Force expiration in memory to trigger a new refresh
+        this.integration.expiresAt = new Date(Date.now() - 1000);
+        await this.ensureValidToken();
+        
+        // Retry once with new token
+        const retryRes = await axios({
+          url: `${this.apiBaseUrl}${endpoint}`,
+          ...options,
+          headers: {
+            ...options.headers,
+            Authorization: `Bearer ${this.integration.accessToken}`,
+            Accept: "application/json",
+            "Content-Type": "application/json",
+          },
+        });
+        return retryRes.data;
+      }
+      
+      const errorData = error.response?.data || {};
+      throw new Error(`QB API Error: ${JSON.stringify(errorData)}`);
     }
-
-    const data = await res.json();
-    if (!res.ok) throw new Error(`QB API Error: ${JSON.stringify(data)}`);
-    return data;
   }
 
   async createContact(data: any): Promise<{ id: string }> {
