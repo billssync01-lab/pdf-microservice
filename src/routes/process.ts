@@ -1,6 +1,6 @@
 import { Router } from "express";
 import multer from "multer";
-import { pdfToImages } from "../services/pdf.service";
+import { pdfConvert, pdfToImages } from "../services/pdf.service";
 import { randomUUID } from "crypto";
 import { auth } from "../middleware/auth";
 import logger from "../utils/logger";
@@ -8,7 +8,7 @@ import logger from "../utils/logger";
 const router = Router();
 const upload = multer({ limits: { fileSize: 10 * 1024 * 1024 } });
 
-router.post("/", auth, upload.single("file"), async (req, res) => {
+router.post("/receipt", auth, upload.single("file"), async (req, res) => {
   logger.info("Process request started")
   if (!req.file) {
     return res.status(400).json({ error: "No file uploaded" });
@@ -24,6 +24,32 @@ router.post("/", auth, upload.single("file"), async (req, res) => {
     pages: images.length,
     images: images
   });
+});
+
+router.post("/statement", auth, async (req, res) => {
+  try {
+    logger.info("Process request started")
+    if (!req.file) {
+      logger.info("File not found")
+      return res.status(400).json({ error: "No file uploaded" });
+    }
+    const jobId = randomUUID();
+    logger.info({ jobId }, "Process request jobid created")
+    const response = await pdfConvert(req.file.buffer, jobId);
+    logger.info({ response }, "Process request ended")
+
+    res.json({
+      success: true,
+      text: response.text,
+      metadata: response.metadata,
+      pages: response.pages,
+      images: response.images,
+      tabular: response.tabular
+    });
+  } catch (error: any) {
+    logger.info({ error }, "Error creating bulk sync job:")
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
 export default router;
