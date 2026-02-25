@@ -131,7 +131,7 @@ export class ReferenceResolver {
   /* ------------------------------ BANK ACCOUNT ------------------------------ */
 
   async resolveBankAccount(): Promise<{ id: string; code?: string }> {
-    const name = this.teamSettings.defaultBankAccount || "Main Bank Account";
+    const name = this.teamSettings.defaultBankAccount || "Uncategorized Asset";
     const existing = await this.adapter.query("Account", `Name = '${this.escape(name)}'`);
 
     if (existing?.length) {
