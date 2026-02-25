@@ -294,6 +294,9 @@ export const Receipts = pgTable("receipts", {
     .notNull()
     .default("parsing"), // parsing | ready | approved | failed | deleted
   rawData: jsonb("raw_data").notNull().default({}),
+  tabular: jsonb("tabular"),
+  metadata: jsonb("metadata"),
+  text: text("text"),
   buildPayload: jsonb("build_payload"),
   errorMessage: text("error_message"),
   lockedAt: timestamp("locked_at", { withTimezone: true }),

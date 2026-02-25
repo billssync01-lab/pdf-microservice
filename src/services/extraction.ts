@@ -395,6 +395,101 @@ Return Return STRICT JSON only in the following structure:
   return prompt;
 }
 
+export async function statementBuilder(
+  category: string,
+  documentType: string,
+  pageType: string | "single"
+) {
+  const isAutoCategory = category === "auto-categorize";
+
+  let systemPrompt = `
+You are a bank statement extraction system.
+Your job is to read the bank statement accurately and return ONLY valid JSON.
+Do not add explanations, comments, or extra text.
+Rules:
+ - If a value is missing, return null.
+ - Dates must be in ISO format (YYYY-MM-DD).
+ - All currency values must be numeric.
+ - Extract all transactions in the statement.
+  `.trim();
+
+  const outputSchema = `
+Return STRICT JSON only in the following structure:
+{
+  "data": {
+    "statementId": string | null,
+    "Bank": string | null,
+    "BankAddress": string | null,
+    "AccountName": string | null,
+    "AccountType": string | null,
+    "AccountNumber": string | null,
+    "Currency": string | null,
+    "FromDate": string | null,
+    "ToDate": string | null,
+    "TotalIn": number | null,
+    "TotalOut": number | null,
+    "Details": [
+      {
+        "date": string | null,
+        "description": string | null,
+        "credit": number | 0,
+        "debit": number | 0,
+        "type": string | null,
+        "transactionType": "deposit" | "expense" | "system",
+        "currency": string | null,
+        "balance": number | null
+      }
+    ]
+  }
+}
+  `.trim();
+
+  const prompt = [
+    systemPrompt,
+    `Document Type: ${documentType}`,
+    `Page Type: ${pageType}`,
+    outputSchema,
+  ].join("\n\n");
+
+  return prompt;
+}
+
+export async function refineExtraction(
+  originalText: string,
+  extractedData: any
+) {
+  const prompt = `
+You are an expert at refining bank statement data.
+I have extracted some data from a bank statement image, but some details might be missing or incorrect.
+I also have the raw text extracted from the document.
+
+Extracted Data (JSON):
+${JSON.stringify(extractedData, null, 2)}
+
+Raw Text:
+${originalText}
+
+Your task:
+1. Compare the Extracted Data with the Raw Text.
+2. Fill in any missing information in the Extracted Data using the Raw Text.
+3. Correct any inaccuracies in the Extracted Data based on the Raw Text.
+4. Ensure all transactions in the Raw Text are captured in the "Details" array.
+5. Return ONLY the refined JSON in the same structure.
+`.trim();
+
+  const res = await openai.chat.completions.create({
+    model: "gpt-4o",
+    temperature: 0,
+    response_format: { type: "json_object" },
+    messages: [
+      { role: "system", content: "You are a helpful assistant that refines data." },
+      { role: "user", content: prompt },
+    ],
+  });
+
+  return JSON.parse(res.choices[0].message.content!);
+}
+
 export async function extractWithVision(
   imageBuffer: Buffer,
   prompt: string,

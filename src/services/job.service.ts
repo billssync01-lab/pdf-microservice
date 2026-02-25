@@ -1,7 +1,7 @@
 import { db } from '../db';
 import { Receipts, SyncJobs, users } from '../schema';
 import { eq, sql } from 'drizzle-orm';
-import { builder, extractWithVision } from './extraction';
+import { builder, extractWithVision, refineExtraction, statementBuilder } from './extraction';
 import axios from 'axios';
 import logger from '../utils/logger';
 import { notifyStatusUpdate } from '../utils/sse';
@@ -17,12 +17,14 @@ export async function updateReceiptData(
   organizationId: number,
   receiptId: number,
   rawData: Record<string, any>,
-  fileUrl?: string
+  fileUrl?: string,
+  buildPayload?: Record<string, any>
 ) {
   logger.info({ receiptId, organizationId }, "Updating receipt data for receipt and organization:")
   const result = await db.update(Receipts)
     .set({
       rawData,
+      buildPayload: buildPayload || undefined,
       fileUrl: fileUrl || undefined,
       status: 'parsed',
       updatedAt: new Date(),
@@ -137,6 +139,78 @@ export async function processReceiptPage(
   }
 }
 
+export async function processStatementPage(
+  receiptId: number,
+  userId: number,
+  category: string,
+  documentType: string,
+  type: string,
+  pageType: string = "single",
+  text?: string
+) {
+  logger.info({ receiptId, userId, category, documentType, type, pageType }, "Processing statement page with details:")
+  try {
+    // Update status to inprogress
+    await db.update(Receipts)
+      .set({ status: 'inprogress', updatedAt: new Date() })
+      .where(eq(Receipts.id, receiptId));
+
+    const receipt = (await db.select().from(Receipts).where(eq(Receipts.id, receiptId)))[0];
+    if (!receipt || !receipt.fileUrl) {
+      throw new Error("Receipt not found or missing file URL");
+    }
+
+    await notifyStatusUpdate(receipt.organizationId, receiptId, 'inprogress');
+
+    // Fetch file buffer
+    const response = await axios.get(receipt.fileUrl, { responseType: 'arraybuffer' });
+    const fileBuffer = Buffer.from(response.data);
+    const contentType = response.headers['content-type'];
+
+    let imageBuffer: Buffer;
+
+    if (contentType === 'application/pdf' || receipt.fileUrl.toLowerCase().endsWith('.pdf')) {
+      const imagePaths = await pdfToImages(fileBuffer, `job-${receiptId}`);
+      if (imagePaths.length === 0) {
+        throw new Error("Failed to convert PDF to images");
+      }
+      imageBuffer = fs.readFileSync(imagePaths[0]);
+    } else {
+      imageBuffer = fileBuffer;
+    }
+
+    // Build initial prompt
+    const prompt = await statementBuilder(category, documentType, pageType);
+    
+    // Extract with vision
+    const buildPayload = await extractWithVision(imageBuffer, prompt, type);
+    
+    let finalRawData = buildPayload;
+
+    // If text is provided, refine the extraction
+    if (text) {
+      logger.info({ receiptId }, "Refining statement extraction with provided text");
+      finalRawData = await refineExtraction(text, buildPayload);
+    }
+
+    // Save results
+    await updateReceiptData(userId, receipt.organizationId, receiptId, finalRawData, receipt.fileUrl, buildPayload);
+    
+    await deductCredits(userId, 1);
+    
+    return true;
+
+  } catch (error: any) {
+    logger.error({ receiptId, error }, `Error processing statement ${receiptId}:`);
+    const results = await db.select().from(Receipts).where(eq(Receipts.id, receiptId));
+    const orgId = results[0]?.organizationId;
+    if (orgId) {
+      await updateReceiptError(orgId, receiptId, error.message || "Unknown error");
+    }
+    return false;
+  }
+}
+
 export async function processJob(jobOrId: any) {
   let job;
   logger.info({ job, jobOrId }, "Process job started")
@@ -171,7 +245,7 @@ export async function processJob(jobOrId: any) {
   await notifyStatusUpdate(job.organizationId, job.id, 'processing');
 
   if (documentType === "Receipt" || documentType === "Receipt Image" || documentType === "Receipt PDF" || documentType === "Invoice PDF" || documentType === "Email invoice") {
-    logger.info({ documentType, job, jobId: job.syncJobId }, "Fetching job details")
+    logger.info({ documentType, job, jobId: job.syncJobId }, "Fetching receipt job details")
     const receipts = await getReceiptsByJobId(job.syncJobId);
 
     let allSucceeded = true;
@@ -183,6 +257,40 @@ export async function processJob(jobOrId: any) {
         receipt.documentType,
         payload?.type || "general",
         payload?.pageType || "single"
+      );
+      if (!success) {
+        allSucceeded = false;
+      }
+    }
+
+    // Mark job status
+    const finalStatus = allSucceeded ? 'completed' : 'parsing failed';
+    await db.update(Receipts)
+      .set({ status: finalStatus, updatedAt: new Date() })
+      .where(eq(Receipts.id, job.id));
+    logger.info({ finalStatus }, "Marked job status")
+    await notifyStatusUpdate(job.organizationId, job.id, finalStatus);
+
+
+    return {
+      success: allSucceeded,
+      count: receipts.length,
+      jobId: job.id
+    };
+  } else if (documentType?.toLowerCase() === "bank statement") {
+    logger.info({ documentType, job, jobId: job.syncJobId }, "Fetching bank statement job details")
+    const receipts = await getReceiptsByJobId(job.syncJobId);
+
+    let allSucceeded = true;
+    for (const receipt of receipts) {
+      const success = await processStatementPage(
+        receipt.id,
+        receipt.userId,
+        payload?.category || "auto-categorize",
+        receipt.documentType,
+        payload?.type || "Bank statement",
+        payload?.pageType || "single",
+        payload?.text,
       );
       if (!success) {
         allSucceeded = false;
