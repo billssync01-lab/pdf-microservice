@@ -285,7 +285,7 @@ export class JobProcessor {
       try {
         payload = PayloadBuilder.build(platform, transaction, lineItems, references, this.teamSettings);
         await db.update(SyncJobItems).set({ payload: payload, status: "syncing" }).where(eq(SyncJobItems.id, jobId));
-        logger.info({ itemId, payloadKeys: Object.keys(payload) }, "Payload built successfully");
+        logger.info({ itemId, payloadKeys: Object.keys(payload), Payload: payload }, "Payload built successfully");
       } catch (error: any) {
         logger.error({ itemId, error: error.message }, "Failed to build payload");
         throw new Error(`Payload build failed: ${error.message}`);

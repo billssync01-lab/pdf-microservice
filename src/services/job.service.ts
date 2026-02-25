@@ -29,7 +29,7 @@ export async function updateReceiptData(
     })
     .where(eq(Receipts.id, receiptId))
     .returning();
-logger.info({ receiptId, organizationId }, "Updated receipt data for receipt and organization:")
+  logger.info({ receiptId, organizationId }, "Updated receipt data for receipt and organization:")
   await notifyStatusUpdate(organizationId, receiptId, 'parsed', { fileUrl });
   return result[0];
 }
@@ -44,7 +44,7 @@ export async function updateReceiptError(organizationId: number, receiptId: numb
     })
     .where(eq(Receipts.id, receiptId))
     .returning();
-logger.info({ receiptId, organizationId, errorMessage }, "Updated receipt with error message for receipt and organization:")
+  logger.info({ receiptId, organizationId, errorMessage }, "Updated receipt with error message for receipt and organization:")
   await notifyStatusUpdate(organizationId, receiptId, 'parsing failed', { error: errorMessage });
   return result;
 }
@@ -83,7 +83,7 @@ export async function processReceiptPage(
     }
 
     await notifyStatusUpdate(receipt.organizationId, receiptId, 'inprogress');
-logger.info({ receiptId, organizationId: receipt.organizationId }, "Notified status update to inprogress for receipt:")
+    logger.info({ receiptId, organizationId: receipt.organizationId }, "Notified status update to inprogress for receipt:")
     // Fetch file buffer
     const response = await axios.get(receipt.fileUrl, { responseType: 'arraybuffer' });
     const fileBuffer = Buffer.from(response.data);
@@ -100,7 +100,7 @@ logger.info({ receiptId, organizationId: receipt.organizationId }, "Notified sta
       }
       // Use the first page for now
       imageBuffer = fs.readFileSync(imagePaths[0]);
-      
+
       // Clean up temp files (optional but recommended)
       // for (const p of imagePaths) fs.unlinkSync(p);
     } else {
@@ -109,7 +109,7 @@ logger.info({ receiptId, organizationId: receipt.organizationId }, "Notified sta
 
     // Build prompt
     const prompt = await builder(category, type, documentType, pageType);
-logger.info({ receiptId, category, type, documentType, pageType }, "Built prompt for receipt processing:")
+    logger.info({ receiptId, category, type, documentType, pageType }, "Built prompt for receipt processing:")
     // Extract with vision
     const result = await extractWithVision(imageBuffer, prompt, type);
     if (result) {
@@ -130,8 +130,8 @@ logger.info({ receiptId, category, type, documentType, pageType }, "Built prompt
     const results = await db.select().from(Receipts).where(eq(Receipts.id, receiptId));
     const orgId = results[0]?.organizationId;
     if (orgId) {
-        await updateReceiptError(orgId, receiptId, error.message || "Unknown error");
-        logger.info({ receiptId, organizationId: orgId, error }, "Updated receipt with error message for receipt and organization:")
+      await updateReceiptError(orgId, receiptId, error.message || "Unknown error");
+      logger.info({ receiptId, organizationId: orgId, error }, "Updated receipt with error message for receipt and organization:")
     }
     return false;
   }
