@@ -26,7 +26,7 @@ router.post("/receipt", auth, upload.single("file"), async (req, res) => {
   });
 });
 
-router.post("/statement", auth, async (req, res) => {
+router.post("/statement", auth, upload.single("file"), async (req, res) => {
   try {
     logger.info("Process request started")
     if (!req.file) {
