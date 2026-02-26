@@ -518,3 +518,36 @@ export async function extractWithVision(
 
   return JSON.parse(res.choices[0].message.content!);
 }
+
+export async function mergeResults(
+  results: any[],
+  documentType: string
+) {
+  const prompt = `
+You are an expert document data merger.
+I have multiple JSON extraction results from different pages of the SAME ${documentType}.
+Your task is to merge them into a single, coherent JSON object.
+
+Rules:
+1. Header information (date, merchant name, total amount, currency, etc.) should be taken from the page where it is most clear (usually the first page).
+2. Line items from ALL pages must be combined into a single "lineItems" array (or "Details" array for bank statements).
+3. Ensure there are no duplicate line items if a page overlap occurred.
+4. The final output must follow the same JSON structure as the inputs.
+5. Return ONLY the merged JSON.
+
+Input Results:
+${JSON.stringify(results, null, 2)}
+`.trim();
+
+  const res = await openai.chat.completions.create({
+    model: "gpt-4o",
+    temperature: 0,
+    response_format: { type: "json_object" },
+    messages: [
+      { role: "system", content: "You are a helpful assistant that merges document data." },
+      { role: "user", content: prompt },
+    ],
+  });
+
+  return JSON.parse(res.choices[0].message.content!);
+}

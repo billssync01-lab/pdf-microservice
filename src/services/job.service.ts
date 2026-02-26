@@ -1,7 +1,7 @@
 import { db } from '../db';
 import { Receipts, SyncJobs, users } from '../schema';
 import { eq, sql } from 'drizzle-orm';
-import { builder, extractWithVision, refineExtraction, statementBuilder } from './extraction';
+import { builder, extractWithVision, mergeResults, refineExtraction, statementBuilder } from './extraction';
 import axios from 'axios';
 import logger from '../utils/logger';
 import { notifyStatusUpdate } from '../utils/sse';
@@ -81,6 +81,7 @@ export async function processReceiptPage(
     const receipt = (await db.select().from(Receipts).where(eq(Receipts.id, receiptId)))[0];
     logger.info({ receiptId, organizationId: receipt?.organizationId }, "Fetched receipt details for processing:")
     if (!receipt || !receipt.fileUrl) {
+      logger.info({receipt: receipt}, "Receipt not found or missing file URL")
       throw new Error("Receipt not found or missing file URL");
     }
 
@@ -122,7 +123,7 @@ export async function processReceiptPage(
 
     // Save results
     await updateReceiptData(userId, receipt.organizationId, receiptId, result, receipt.fileUrl);
-    return true;
+    return result;
 
   } catch (error: any) {
     logger.info({ receiptId, error }, `Error processing receipt ${receiptId}:`);
@@ -198,7 +199,7 @@ export async function processStatementPage(
     
     await deductCredits(userId, 1);
     
-    return true;
+    return finalRawData;
 
   } catch (error: any) {
     logger.error({ receiptId, error }, `Error processing statement ${receiptId}:`);
@@ -212,19 +213,35 @@ export async function processStatementPage(
 }
 
 export async function processJob(jobOrId: any) {
-  let job;
-  logger.info({ job, jobOrId }, "Process job started")
+  let job: any;
+  logger.info({ jobOrId }, "Process job started")
+  
   if (typeof jobOrId === 'string') {
-    const id = parseInt(jobOrId, 10);
-    logger.info("Getting job details")
-    const results = await db.select().from(Receipts).where(eq(Receipts.id, id));
-    job = results[0];
+    // If it's a UUID (SyncJob)
+    if (jobOrId.includes('-')) {
+      const results = await db.select().from(SyncJobs).where(eq(SyncJobs.id, jobOrId));
+      job = results[0];
+    } else {
+      // It's a Receipt ID
+      const id = parseInt(jobOrId, 10);
+      const results = await db.select().from(Receipts).where(eq(Receipts.id, id));
+      const receipt = results[0];
+      if (receipt) {
+        const syncResults = await db.select().from(SyncJobs).where(eq(SyncJobs.id, receipt.syncJobId));
+        job = syncResults[0];
+      }
+    }
+  } else if (jobOrId && jobOrId.syncJobId) {
+    // It's a Receipt record
+    const syncResults = await db.select().from(SyncJobs).where(eq(SyncJobs.id, jobOrId.syncJobId));
+    job = syncResults[0];
   } else {
+    // It's a SyncJob record or unknown
     job = jobOrId;
   }
 
   if (!job) {
-    logger.info({ job, jobOrId }, "Process job not found")
+    logger.info({ jobOrId }, "Process job not found")
     return { success: false, error: "Job not found" };
   }
 
@@ -232,25 +249,29 @@ export async function processJob(jobOrId: any) {
   const cancelledAt = job.cancelledAt || job.cancelled_at;
   const documentType = job.documentType || job.document_type;
   const payload = job.payload as any;
+  const pageType = payload?.pageType || "single";
 
   if (cancelledAt || status === "cancelled") {
-    logger.info({ job, jobOrId }, "Process job cancelled")
+    logger.info({ jobId: job.id }, "Process job cancelled")
     return { success: false, error: "Job cancelled", jobId: job.id };
   }
 
-  await db.update(Receipts)
-    .set({ status: 'processing', updatedAt: new Date() })
-    .where(eq(Receipts.id, job.id));
+  // Update SyncJob status to processing
+  await db.update(SyncJobs)
+    .set({ status: 'processing', updatedAt: new Date(), startedAt: new Date() })
+    .where(eq(SyncJobs.id, job.id));
+
   logger.info("Updated job status to processing")
   await notifyStatusUpdate(job.organizationId, job.id, 'processing');
 
-  if (documentType === "Receipt" || documentType === "Receipt Image" || documentType === "Receipt PDF" || documentType === "Invoice PDF" || documentType === "Email invoice") {
-    logger.info({ documentType, job, jobId: job.syncJobId }, "Fetching receipt job details")
-    const receipts = await getReceiptsByJobId(job.syncJobId);
+  const receipts = await getReceiptsByJobId(job.id);
+  let allSucceeded = true;
+  const results: any[] = [];
 
-    let allSucceeded = true;
-    for (const receipt of receipts) {
-      const success = await processReceiptPage(
+  for (const receipt of receipts) {
+    let result;
+    if (documentType === "Receipt" || documentType === "Receipt Image" || documentType === "Receipt PDF" || documentType === "Invoice PDF" || documentType === "Email invoice") {
+      result = await processReceiptPage(
         receipt.id,
         receipt.userId,
         payload?.category || "auto-categorize",
@@ -258,32 +279,8 @@ export async function processJob(jobOrId: any) {
         payload?.type || "general",
         payload?.pageType || "single"
       );
-      if (!success) {
-        allSucceeded = false;
-      }
-    }
-
-    // Mark job status
-    const finalStatus = allSucceeded ? 'completed' : 'parsing failed';
-    await db.update(Receipts)
-      .set({ status: finalStatus, updatedAt: new Date() })
-      .where(eq(Receipts.id, job.id));
-    logger.info({ finalStatus }, "Marked job status")
-    await notifyStatusUpdate(job.organizationId, job.id, finalStatus);
-
-
-    return {
-      success: allSucceeded,
-      count: receipts.length,
-      jobId: job.id
-    };
-  } else if (documentType?.toLowerCase() === "bank statement") {
-    logger.info({ documentType, job, jobId: job.syncJobId }, "Fetching bank statement job details")
-    const receipts = await getReceiptsByJobId(job.syncJobId);
-
-    let allSucceeded = true;
-    for (const receipt of receipts) {
-      const success = await processStatementPage(
+    } else if (documentType?.toLowerCase() === "bank statement") {
+      result = await processStatementPage(
         receipt.id,
         receipt.userId,
         payload?.category || "auto-categorize",
@@ -292,30 +289,47 @@ export async function processJob(jobOrId: any) {
         payload?.pageType || "single",
         payload?.text,
       );
-      if (!success) {
-        allSucceeded = false;
-      }
     }
 
-    // Mark job status
-    const finalStatus = allSucceeded ? 'completed' : 'parsing failed';
-    await db.update(Receipts)
-      .set({ status: finalStatus, updatedAt: new Date() })
-      .where(eq(Receipts.id, job.id));
-    logger.info({ finalStatus }, "Marked job status")
-    await notifyStatusUpdate(job.organizationId, job.id, finalStatus);
+    if (!result) {
+      allSucceeded = false;
+    } else {
+      results.push(result);
+    }
 
-
-    return {
-      success: allSucceeded,
-      count: receipts.length,
-      jobId: job.id
-    };
+    if (pageType === 'multi') {
+      // Update SyncJob results incrementally
+      await db.update(SyncJobs)
+        .set({ result: results, updatedAt: new Date() })
+        .where(eq(SyncJobs.id, job.id));
+    }
   }
 
+  // Final merge for single page type
+  let finalResult = results;
+  if (pageType === 'single' && results.length > 0) {
+    finalResult = await mergeResults(results, documentType);
+  }
+
+  // Mark job status
+  const finalStatus = allSucceeded ? 'completed' : 'failed';
+  await db.update(SyncJobs)
+    .set({ 
+      status: finalStatus, 
+      result: finalResult, 
+      updatedAt: new Date(),
+      completedAt: new Date(),
+      successCount: results.length,
+      errorCount: receipts.length - results.length
+    })
+    .where(eq(SyncJobs.id, job.id));
+  
+  logger.info({ finalStatus }, "Marked job status")
+  await notifyStatusUpdate(job.organizationId, job.id, finalStatus);
+
   return {
-    success: false,
-    error: `Unknown job type: ${documentType}`,
+    success: allSucceeded,
+    count: receipts.length,
     jobId: job.id
   };
 }

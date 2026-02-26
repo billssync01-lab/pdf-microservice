@@ -27,29 +27,25 @@ async function claimAccountingJobs() {
 async function claimReceiptJobs() {
   logger.info("Claiming jobs")
 
-  // Handle stuck jobs: set status to 'stuck' if processing for > 5 mins
-  const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
-  const stuckResult = await db.update(Receipts)
-    .set({ status: 'stuck', updatedAt: new Date() })
+  // Handle stuck jobs: set status to 'failed' if processing for > 15 mins
+  const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+  await db.update(SyncJobs)
+    .set({ status: 'failed', updatedAt: new Date() })
     .where(and(
-      eq(Receipts.status, 'processing'),
-      lt(Receipts.lockedAt, fiveMinutesAgo)
-    ))
-    .returning();
-
-  if (stuckResult.length > 0) {
-    logger.info({ count: stuckResult.length }, "Marked jobs as stuck");
-  }
+      eq(SyncJobs.status, 'processing'),
+      lt(SyncJobs.lockedAt, fifteenMinutesAgo)
+    ));
 
   const concurrency = 5;
 
-  // Claim new jobs using a subquery to limit to concurrency (5)
-  // We use FOR UPDATE SKIP LOCKED to prevent multiple workers from claiming same jobs
-  const result = await db.update(Receipts)
-    .set({ lockedAt: new Date() })
-    .where(inArray(Receipts.id, sql`(
-      SELECT ${Receipts.id} FROM ${Receipts}
-      WHERE ${Receipts.status} = 'queued' AND ${Receipts.lockedAt} IS NULL
+  // Claim new sync jobs that are not accounting sync
+  const result = await db.update(SyncJobs)
+    .set({ lockedAt: new Date(), status: 'processing' })
+    .where(inArray(SyncJobs.id, sql`(
+      SELECT ${SyncJobs.id} FROM ${SyncJobs}
+      WHERE ${SyncJobs.status} = 'queued' 
+      AND ${SyncJobs.documentType} != 'accounting_sync'
+      AND ${SyncJobs.lockedAt} IS NULL
       FOR UPDATE SKIP LOCKED
       LIMIT ${concurrency}
     )`))
