@@ -4,7 +4,7 @@ import { eq, sql } from 'drizzle-orm';
 import { builder, extractWithVision, mergeResults, refineExtraction, statementBuilder } from './extraction';
 import axios from 'axios';
 import logger from '../utils/logger';
-import { notifyStatusUpdate } from '../utils/sse';
+// import { notifyStatusUpdate } from '../utils/sse';
 import { pdfToImages } from './pdf.service';
 import fs from 'fs';
 
@@ -32,7 +32,7 @@ export async function updateReceiptData(
     .where(eq(Receipts.id, receiptId))
     .returning();
   logger.info({ receiptId, organizationId }, "Updated receipt data for receipt and organization:")
-  await notifyStatusUpdate(organizationId, receiptId, 'parsed', { fileUrl });
+  // await notifyStatusUpdate(organizationId, receiptId, 'parsed', { fileUrl });
   return result[0];
 }
 
@@ -47,7 +47,7 @@ export async function updateReceiptError(organizationId: number, receiptId: numb
     .where(eq(Receipts.id, receiptId))
     .returning();
   logger.info({ receiptId, organizationId, errorMessage }, "Updated receipt with error message for receipt and organization:")
-  await notifyStatusUpdate(organizationId, receiptId, 'parsing failed', { error: errorMessage });
+  // await notifyStatusUpdate(organizationId, receiptId, 'parsing failed', { error: errorMessage });
   return result;
 }
 
@@ -85,7 +85,7 @@ export async function processReceiptPage(
       throw new Error("Receipt not found or missing file URL");
     }
 
-    await notifyStatusUpdate(receipt.organizationId, receiptId, 'inprogress');
+    // await notifyStatusUpdate(receipt.organizationId, receiptId, 'inprogress');
     logger.info({ receiptId, organizationId: receipt.organizationId }, "Notified status update to inprogress for receipt:")
     // Fetch file buffer
     const response = await axios.get(receipt.fileUrl, { responseType: 'arraybuffer' });
@@ -161,7 +161,7 @@ export async function processStatementPage(
       throw new Error("Receipt not found or missing file URL");
     }
 
-    await notifyStatusUpdate(receipt.organizationId, receiptId, 'inprogress');
+    // await notifyStatusUpdate(receipt.organizationId, receiptId, 'inprogress');
 
     // Fetch file buffer
     const response = await axios.get(receipt.fileUrl, { responseType: 'arraybuffer' });
@@ -262,7 +262,7 @@ export async function processJob(jobOrId: any) {
     .where(eq(SyncJobs.id, job.id));
 
   logger.info("Updated job status to processing")
-  await notifyStatusUpdate(job.organizationId, job.id, 'processing');
+  // await notifyStatusUpdate(job.organizationId, job.id, 'processing');
 
   const receipts = await getReceiptsByJobId(job.id);
   let allSucceeded = true;
@@ -325,7 +325,7 @@ export async function processJob(jobOrId: any) {
     .where(eq(SyncJobs.id, job.id));
   
   logger.info({ finalStatus }, "Marked job status")
-  await notifyStatusUpdate(job.organizationId, job.id, finalStatus);
+  // await notifyStatusUpdate(job.organizationId, job.id, finalStatus);
 
   return {
     success: allSucceeded,
