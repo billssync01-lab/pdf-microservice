@@ -238,7 +238,7 @@ export class QuickBooksAdapter implements AccountingAdapter {
   }
 
   async createExpense(payload: any): Promise<CreateTransactionResponse> {
-    const response = await this.fetchWithToken(`/v3/company/${this.integration.realmId}/purchase`, {
+    const response = await this.fetchWithToken(`/v3/company/${this.integration.realmId}/purchase?minorversion=75`, {
       method: "POST",
       data: payload,
     });
