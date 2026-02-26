@@ -1,6 +1,6 @@
 import { db } from "../../db";
 import { Integrations } from "../../schema";
-import { eq } from "drizzle-orm";
+import { eq, and, isNull } from "drizzle-orm";
 import { AccountingAdapter, CreateTransactionResponse } from "./accounting.adapter";
 import logger from "../../utils/logger";
 import axios from "axios";
@@ -9,6 +9,7 @@ export class QuickBooksAdapter implements AccountingAdapter {
   private integration: any;
   private apiBaseUrl: string;
   private refreshPromise: Promise<void> | null = null;
+  private isPrimaryLoaded = false;
 
   constructor(integration: any) {
     this.integration = integration;
@@ -16,8 +17,8 @@ export class QuickBooksAdapter implements AccountingAdapter {
   }
 
   private isTokenExpired(integrationData: any = this.integration): boolean {
-    if (!integrationData.expiresAt) {
-      logger.warn({ integrationId: integrationData.id }, "Token expiry date not set");
+    if (!integrationData || !integrationData.expiresAt) {
+      logger.warn({ integrationId: integrationData?.id }, "Token expiry date not set");
       return true;
     }
 
@@ -39,14 +40,14 @@ export class QuickBooksAdapter implements AccountingAdapter {
   }
 
   private async ensureValidToken(): Promise<void> {
-    // 1. Initial memory check
-    if (!this.isTokenExpired()) {
+    // 1. Initial memory check - if already primary and not expired, skip
+    if (this.isPrimaryLoaded && !this.isTokenExpired()) {
       return;
     }
 
     // 2. Lock to prevent concurrent refresh in SAME process
     if (this.refreshPromise) {
-      logger.info({ integrationId: this.integration.id }, "Waiting for existing token refresh in progress");
+      logger.info({ integrationId: this.integration.id }, "Waiting for existing token refresh or primary load in progress");
       await this.refreshPromise;
       return;
     }
@@ -54,23 +55,52 @@ export class QuickBooksAdapter implements AccountingAdapter {
     // 3. Create refresh promise
     this.refreshPromise = (async () => {
       try {
-        // 4. Fetch latest from DB to check if ANOTHER process refreshed it
-        const latestIntegration = await db.query.Integrations.findFirst({
-          where: eq(Integrations.id, this.integration.id),
+        // Fetch the primary integration for the user to ensure we have the correct realmId
+        // and latest tokens. This satisfies the requirement to use the realmId for the
+        // userid with priority 1 and status 1.
+        const primaryIntegration = await db.query.Integrations.findFirst({
+          where: and(
+            eq(Integrations.userId, Number(this.integration.userId)),
+            eq(Integrations.provider, "quickbooks"),
+            eq(Integrations.priority, 1),
+            eq(Integrations.status, "1"),
+            isNull(Integrations.deletedAt)
+          ),
         });
 
-        if (latestIntegration) {
-          this.integration = latestIntegration; // Update memory with latest DB data
-
-          // Check if DB already has a valid token now
-          if (!this.isTokenExpired(latestIntegration)) {
-            logger.info({ integrationId: this.integration.id }, "Token was refreshed by another process, skipping");
-            return;
+        if (primaryIntegration) {
+          this.integration = primaryIntegration;
+          this.isPrimaryLoaded = true;
+          logger.info({ 
+            integrationId: this.integration.id, 
+            realmId: this.integration.realmId,
+            userId: this.integration.userId 
+          }, "Primary QuickBooks integration loaded");
+        } else {
+          logger.warn({ 
+            userId: this.integration.userId,
+            integrationId: this.integration.id 
+          }, "Primary QuickBooks integration not found, using provided integration data");
+          
+          // If not primary, we still try to fetch the latest for the current ID
+          const latest = await db.query.Integrations.findFirst({
+            where: eq(Integrations.id, this.integration.id)
+          });
+          if (latest) {
+            this.integration = latest;
           }
         }
 
         // 5. Perform the actual refresh if still expired
-        await this.refreshToken();
+        if (this.isTokenExpired()) {
+          await this.refreshToken();
+        }
+      } catch (error: any) {
+        logger.error({ 
+          error: error.message, 
+          userId: this.integration.userId 
+        }, "Failed to ensure valid token");
+        throw error;
       } finally {
         this.refreshPromise = null;
       }
@@ -84,7 +114,14 @@ export class QuickBooksAdapter implements AccountingAdapter {
     const clientSecret = process.env.QUICKBOOKS_CLIENT_SECRET;
     const tokenUrl = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer";
 
-    logger.info({ integrationId: this.integration.id, clientId: clientId, clientSecret: clientSecret, provider: "quickbooks" }, "Attempting to refresh QuickBooks token");
+    if (!clientId || !clientSecret) {
+      throw new Error("QuickBooks client credentials missing from environment");
+    }
+
+    logger.info({ 
+      integrationId: this.integration.id, 
+      provider: "quickbooks" 
+    }, "Attempting to refresh QuickBooks token");
 
     try {
       const auth = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
@@ -121,7 +158,10 @@ export class QuickBooksAdapter implements AccountingAdapter {
         updatedAt: new Date(),
       }).where(eq(Integrations.id, this.integration.id));
 
-      logger.info({ integrationId: this.integration.id, expiresAt: this.integration.expiresAt }, "QuickBooks token refreshed successfully");
+      logger.info({ 
+        integrationId: this.integration.id, 
+        expiresAt: this.integration.expiresAt 
+      }, "QuickBooks token refreshed successfully");
     } catch (error: any) {
       const errorData = error.response?.data || {};
       logger.error({
@@ -147,9 +187,13 @@ export class QuickBooksAdapter implements AccountingAdapter {
   private async fetchWithToken(endpoint: string, options: any = {}): Promise<any> {
     await this.ensureValidToken();
 
+    // Ensure minorversion is included for consistency with latest QuickBooks features
+    const separator = endpoint.includes("?") ? "&" : "?";
+    const finalEndpoint = endpoint.includes("minorversion") ? endpoint : `${endpoint}${separator}minorversion=75`;
+
     try {
       const res = await axios({
-        url: `${this.apiBaseUrl}${endpoint}`,
+        url: `${this.apiBaseUrl}${finalEndpoint}`,
         ...options,
         headers: {
           ...options.headers,
@@ -164,17 +208,18 @@ export class QuickBooksAdapter implements AccountingAdapter {
       if (error.response?.status === 401) {
         logger.warn({
           integrationId: this.integration.id,
-          endpoint,
+          endpoint: finalEndpoint,
           statusCode: 401
         }, "Received 401 despite token validation, attempting force refresh");
 
         // Force expiration in memory to trigger a new refresh
         this.integration.expiresAt = new Date(Date.now() - 1000);
+        this.isPrimaryLoaded = false; // Reset to ensure we re-load primary too
         await this.ensureValidToken();
 
         // Retry once with new token
         const retryRes = await axios({
-          url: `${this.apiBaseUrl}${endpoint}`,
+          url: `${this.apiBaseUrl}${finalEndpoint}`,
           ...options,
           headers: {
             ...options.headers,
@@ -192,18 +237,17 @@ export class QuickBooksAdapter implements AccountingAdapter {
   }
 
   async createContact(data: any): Promise<{ id: string }> {
-    logger.info({ data }, "Creating contact for quickbooks")
+    logger.info({ data }, "Creating contact for QuickBooks");
     const payload = {
       DisplayName: data.name,
       PrimaryEmailAddr: data.email ? { Address: data.email } : undefined,
     };
     const type = data.type === 'customer' ? 'customer' : 'vendor';
-    logger.info({ type, payload, realmid: this.integration.realmId }, "getting payload and type")
+    
     const response = await this.fetchWithToken(`/v3/company/${this.integration.realmId}/${type}`, {
       method: "POST",
       data: payload,
     });
-    logger.info({ response }, "Quickbooks contact creation completed")
 
     const entityName = type.charAt(0).toUpperCase() + type.slice(1);
     const entity = response[entityName];
@@ -217,7 +261,7 @@ export class QuickBooksAdapter implements AccountingAdapter {
   }
 
   async createProduct(data: any): Promise<{ id: string }> {
-    logger.info({ data }, "Creating product for quickbooks")
+    logger.info({ data }, "Creating product for QuickBooks");
     const payload = {
       Name: data.name,
       Type: "Service",
@@ -238,7 +282,7 @@ export class QuickBooksAdapter implements AccountingAdapter {
   }
 
   async createExpense(payload: any): Promise<CreateTransactionResponse> {
-    const response = await this.fetchWithToken(`/v3/company/${this.integration.realmId}/purchase?minorversion=75`, {
+    const response = await this.fetchWithToken(`/v3/company/${this.integration.realmId}/purchase`, {
       method: "POST",
       data: payload,
     });
@@ -325,31 +369,45 @@ export class QuickBooksAdapter implements AccountingAdapter {
   async createAccount(data: any): Promise<{ id: string }> {
     const payload = {
       Name: data.name,
-      AccountType: "Expense",
+      AccountType: data.type || "Expense",
     };
     const response = await this.fetchWithToken(`/v3/company/${this.integration.realmId}/account`, {
       method: "POST",
       data: payload,
     });
+
+    if (!response.Account || !response.Account.Id) {
+      logger.error({ response }, "QuickBooks account creation response missing Account data");
+      throw new Error("QuickBooks account creation failed");
+    }
+
     return { id: response.Account.Id };
   }
 
   async createTaxRate(data: any): Promise<{ id: string }> {
     const response = await this.fetchWithToken(`/v3/company/${this.integration.realmId}/taxservice/taxcode`, {
       method: "POST",
-      body: JSON.stringify(data),
+      data: data,
     });
+    
+    if (!response.TaxCodeId) {
+      logger.error({ response }, "QuickBooks tax rate creation response missing TaxCodeId");
+      throw new Error("QuickBooks tax rate creation failed");
+    }
+    
     return { id: response.TaxCodeId };
   }
 
   async fetchAccounts(): Promise<any[]> {
-    const response = await this.fetchWithToken(`/v3/company/${this.integration.realmId}/query?query=select * from Account maxresults 500`);
-    return response.QueryResponse.Account || [];
+    const query = "select * from Account maxresults 500";
+    const response = await this.fetchWithToken(`/v3/company/${this.integration.realmId}/query?query=${encodeURIComponent(query)}`);
+    return response.QueryResponse?.Account || [];
   }
 
   async fetchTaxRates(): Promise<any[]> {
-    const response = await this.fetchWithToken(`/v3/company/${this.integration.realmId}/query?query=select * from TaxCode maxresults 500`);
-    return response.QueryResponse.TaxCode || [];
+    const query = "select * from TaxCode maxresults 500";
+    const response = await this.fetchWithToken(`/v3/company/${this.integration.realmId}/query?query=${encodeURIComponent(query)}`);
+    return response.QueryResponse?.TaxCode || [];
   }
 
   async fetchContacts(type: 'customer' | 'vendor' = 'vendor', lastUpdated?: Date): Promise<any[]> {
@@ -360,7 +418,7 @@ export class QuickBooksAdapter implements AccountingAdapter {
     }
     query += ` maxresults 500`;
     const response = await this.fetchWithToken(`/v3/company/${this.integration.realmId}/query?query=${encodeURIComponent(query)}`);
-    return response.QueryResponse[table] || [];
+    return response.QueryResponse?.[table] || [];
   }
 
   async fetchProducts(lastUpdated?: Date): Promise<any[]> {
@@ -370,12 +428,12 @@ export class QuickBooksAdapter implements AccountingAdapter {
     }
     query += ` maxresults 500`;
     const response = await this.fetchWithToken(`/v3/company/${this.integration.realmId}/query?query=${encodeURIComponent(query)}`);
-    return response.QueryResponse.Item || [];
+    return response.QueryResponse?.Item || [];
   }
 
   async query(entity: string, criteria: string): Promise<any[]> {
     const query = `select * from ${entity} where ${criteria}`;
     const response = await this.fetchWithToken(`/v3/company/${this.integration.realmId}/query?query=${encodeURIComponent(query)}`);
-    return response.QueryResponse[entity] || [];
+    return response.QueryResponse?.[entity] || [];
   }
 }

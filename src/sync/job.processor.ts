@@ -73,6 +73,7 @@ export class JobProcessor {
       const integration = await db.query.Integrations.findFirst({
         where: and(
           eq(Integrations.organizationId, job.organizationId),
+          eq(Integrations.userId, job.userId),
           eq(Integrations.provider, (job.payload as any).platform),
           eq(Integrations.priority, 1),
           eq(Integrations.status, "1"),
