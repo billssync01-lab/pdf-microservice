@@ -40,7 +40,7 @@ export class PayloadBuilder {
     return {
       PaymentType: "Cash",
       Line: this.getQBLineItems(lineItems, references, "AccountBasedExpenseLineDetail"),
-      VendorRef: { value: references.contactId },
+      EntityRef: { type: "Vendor", value: references.contactId },
       AccountRef: { value: references.bankAccountId },
       TxnDate: transaction.date.toISOString().split("T")[0],
       PrivateNote: transaction.notes,
@@ -93,7 +93,7 @@ export class PayloadBuilder {
   private static getQBLineItems(lineItems: any[], references: any, detailType: string) {
     return lineItems.map((item) => {
       const line: any = {
-        Description: item.productName,
+        Description: item.description || item.productName,
         Amount: item.totalAmount / 100,
         DetailType: detailType,
       };
@@ -120,7 +120,7 @@ export class PayloadBuilder {
       Contact: { ContactID: references.contactId },
       Date: transaction.date.toISOString().split("T")[0],
       LineItems: lineItems.map((item) => ({
-        Description: item.productName,
+        Description: item.description || item.productName,
         Quantity: item.quantity,
         UnitAmount: item.price / 100,
         AccountCode: item.lineAccountCode || references.accountCode,
@@ -165,6 +165,7 @@ export class PayloadBuilder {
       line_items: lineItems.map((item) => ({
         account_id: item.lineAccountId || references.accountId,
         name: item.productName,
+        description: item.description,
         rate: item.price / 100,
         quantity: item.quantity,
       })),

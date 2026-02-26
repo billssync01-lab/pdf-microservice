@@ -262,16 +262,32 @@ export class JobProcessor {
         throw new Error(`Bank account resolution failed: ${error.message}`);
       }
 
-      // Resolve each line item product
-      for (const lineItem of lineItems) {
+      // 1. Resolve default line reference (Product for Invoice, Account for Expense)
+      let lineRef: { id: string; code?: string };
+      if (transaction.type === 'expense') {
+        lineRef = account; // Use the "Uncategorized Expense" account resolved above
+      } else {
+        // For invoices/sales, we use a generic "sales" product/item as requested
         try {
-          const product = await resolver.resolveProduct(lineItem.productName, Number(lineItem.price));
-          lineItem.lineAccountId = product.id;
-          lineItem.lineAccountCode = product.code ?? null;
-          logger.info({ itemId, productName: lineItem.productName, productId: product.id, productCode: product.code }, "Product resolved for line item");
+          lineRef = await resolver.resolveProduct("sales", 0);
+          logger.info({ itemId, productId: lineRef.id }, "Resolved default 'sales' product for invoice");
         } catch (error: any) {
-          logger.warn({ itemId, productName: lineItem.productName, error: error.message }, "Failed to resolve product for line item");
+          logger.warn({ itemId, error: error.message }, "Failed to resolve 'sales' product, falling back to account");
+          lineRef = account;
         }
+      }
+
+      // 2. Map line items without individual product resolution
+      for (const lineItem of lineItems) {
+        
+        // For invoices, set the item name as "sales" as requested
+        if (transaction.type !== 'expense') {
+          lineItem.productName = "sales";
+        }
+        
+        // Set the unified reference
+        lineItem.lineAccountId = lineRef.id;
+        lineItem.lineAccountCode = lineRef.code ?? null;
       }
 
       const references = {
