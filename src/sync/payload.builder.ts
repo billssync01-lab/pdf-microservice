@@ -125,7 +125,7 @@ export class PayloadBuilder {
         UnitAmount: item.price / 100,
         AccountCode: item.lineAccountCode || references.accountCode,
       })),
-      Status: "AUTHORISED",
+      Status: "DRAFT",
     };
   }
 
