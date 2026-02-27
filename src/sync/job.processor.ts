@@ -279,12 +279,12 @@ export class JobProcessor {
 
       // 2. Map line items without individual product resolution
       for (const lineItem of lineItems) {
-        
+
         // For invoices, set the item name as "sales" as requested
         if (transaction.type !== 'expense') {
           lineItem.productName = "sales";
         }
-        
+
         // Set the unified reference
         lineItem.lineAccountId = lineRef.id;
         lineItem.lineAccountCode = lineRef.code ?? null;
@@ -313,6 +313,10 @@ export class JobProcessor {
       try {
         if (transaction.type === 'expense') {
           result = await adapter.createExpense!(payload);
+        } else if (transaction.type === 'sales') {
+          result = await adapter.createInvoice!(payload);
+        } else if (transaction.type === 'deposit') {
+          result = await adapter.createSalesReceipt!(payload);
         } else {
           result = await adapter.createInvoice!(payload);
         }

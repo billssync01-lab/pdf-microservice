@@ -309,7 +309,7 @@ Focus on totals, taxes, discounts and merchant details.
       `.trim();
       break;
 
-      case "Receipt PDF":
+    case "Receipt PDF":
       documentTypeInstruction = `
 The document is a receipt.
 Line items may be present.
@@ -411,6 +411,13 @@ Rules:
  - Dates must be in ISO format (YYYY-MM-DD).
  - All currency values must be numeric.
  - Extract all transactions in the statement.
+ - categorize correctly as credit or debit for each line item if withdrawals/deposits, credits/debits or money in/money out.
+ - create a summary with the date about the statement and add as notes.
+ - Automatically determine the most appropriate expense category (Software, Cloud Services, Meals, Travel, Office Supplies, Equipment, Utilities, Transportation, Accommodation, miscellaneous expenses).
+ - If balance brought forward or opening balance found then ignore and do not add in details.
+ - update the description for each details line by rephrasing the description of the transaction.
+ - Update type for each details line as credit or debit
+ - If type is Debits/Withdrawals set the transaction type as Expense, if type is Credits/Deposits then set the transaction type as Sales
   `.trim();
 
   const outputSchema = `
@@ -428,10 +435,12 @@ Return STRICT JSON only in the following structure:
     "ToDate": string | null,
     "TotalIn": number | null,
     "TotalOut": number | null,
+    "notes": string | null,
     "Details": [
       {
         "date": string | null,
         "description": string | null,
+        "category": string | null,
         "credit": number | 0,
         "debit": number | 0,
         "type": string | null,
@@ -473,8 +482,40 @@ Your task:
 1. Compare the Extracted Data with the Raw Text.
 2. Fill in any missing information in the Extracted Data using the Raw Text.
 3. Correct any inaccuracies in the Extracted Data based on the Raw Text.
-4. Ensure all transactions in the Raw Text are captured in the "Details" array.
-5. Return ONLY the refined JSON in the same structure.
+4. Ensure all transactions in the Raw Text are captured in the "Details" array, if missing in extracted data append from Raw text.
+5. Automatically determine the most appropriate expense category (Software, Cloud Services, Meals, Travel, Office Supplies, Equipment, Utilities, Transportation, Accommodation, miscellaneous expenses).
+6. If balance brought forward or opening balance found then ignore and do not add in details.
+7. Return ONLY the refined JSON in the same structure.
+
+{
+  "data": {
+    "statementId": string | null,
+    "Bank": string | null,
+    "BankAddress": string | null,
+    "AccountName": string | null,
+    "AccountType": string | null,
+    "AccountNumber": string | null,
+    "Currency": string | null,
+    "FromDate": string | null,
+    "ToDate": string | null,
+    "TotalIn": number | null,
+    "TotalOut": number | null,
+    "notes": string | null,
+    "Details": [
+      {
+        "date": string | null,
+        "description": string | null,
+        "category": string | null,
+        "credit": number | 0,
+        "debit": number | 0,
+        "type": string | null,
+        "transactionType": "deposit" | "expense" | "system",
+        "currency": string | null,
+        "balance": number | null
+      }
+    ]
+  }
+}
 `.trim();
 
   const res = await openai.chat.completions.create({
